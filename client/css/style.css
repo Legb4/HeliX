@@ -1,0 +1,600 @@
+/* client/css/style.css */
+/* This file defines the visual appearance of the HeliX chat client interface. */
+
+/* --- Color Palette (Dark Theme - Refined) --- */
+/* Defines CSS custom properties (variables) for a consistent dark theme. */
+:root {
+    /* Background Colors */
+    --bg-body: #1e1e1e;                 /* Main body background */
+    --bg-sidebar: #252526;              /* Sidebar background */
+    --bg-main: #1e1e1e;                 /* Main content area background (same as body) */
+    --bg-input: #3c3c3c;                /* Input field background */
+    --bg-message-area: #252526;         /* Background for the message display area */
+    --bg-message-peer-subtle: rgba(204, 204, 204, 0.05); /* Subtle background for peer messages (optional) */
+    --bg-message-own-subtle: rgba(0, 122, 204, 0.08);   /* Subtle background for own messages (optional) */
+    --bg-message-system: rgba(218, 165, 32, 0.1); /* Background for system messages */
+    --bg-button: #3f3f46;               /* Default button background */
+    --bg-button-hover: #5a5a63;         /* Button background on hover */
+    --bg-button-active: #4a4a53;        /* Button background when clicked */
+    --bg-button-disabled: #444444;      /* Button background when disabled */
+    --bg-button-danger: #8f3040;        /* Background for danger/destructive buttons (e.g., disconnect) */
+    --bg-button-danger-hover: #a84050;  /* Danger button background on hover */
+    --bg-list-hover: #2a2d2e;           /* Background for session list items on hover */
+    --bg-list-active: #094771;          /* Background for the active session list item */
+    --bg-info: #333322;                 /* Background for informational areas (e.g., incoming request) */
+    --bg-danger-info: #442a31;          /* Background for error/denial info areas */
+
+    /* Text Colors */
+    --text-light: #cccccc;              /* Primary light text color */
+    --text-light-strong: #d4d4d4;       /* Slightly stronger light text color */
+    --text-secondary: #a0a0a0;          /* Secondary text color (for labels, timestamps, status) */
+    --text-link: #4dabf7;               /* Link color (not currently used, but good practice) */
+    --text-sender-peer: #ce9178;        /* Color for peer's sender name */
+    --text-sender-own: #9cdcfe;         /* Color for own sender name */
+    --text-sender-system: #dcdcaa;      /* Color for system message sender/prefix */
+    --text-error: #f48771;              /* Text color for error messages */
+    --text-info: #ffd54f;               /* Text color for informational messages */
+    --text-button-disabled: #888888;    /* Text color for disabled buttons */
+    --text-typing: #a0a0a0;             /* Color for the 'is typing...' indicator text */
+
+    /* Border Colors */
+    --border-color: #333333;            /* Default border color */
+    --border-color-input: #555555;      /* Border color for input fields */
+    --border-color-danger: #a84050;     /* Border color for danger elements */
+    --border-color-info: #666;          /* Border color for info elements */
+
+    /* Accent Colors */
+    --accent-red: #f44336;              /* Red accent (e.g., notification dot) */
+    --accent-blue: #007acc;             /* Blue accent (e.g., input focus) */
+    --accent-green: #4ec9b0;            /* Green accent (e.g., own ID highlight) */
+}
+
+/* Basic Reset & Body */
+/* Apply border-box sizing globally for easier layout calculations. */
+html {
+    height: 100%; /* Ensure HTML element takes full viewport height */
+    box-sizing: border-box;
+}
+*, *:before, *:after {
+  box-sizing: inherit; /* Inherit box-sizing from html */
+}
+
+/* Base styles for the entire page. */
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; /* System font stack */
+    margin: 0; /* Remove default body margin */
+    display: flex; /* Use flexbox for main layout */
+    flex-direction: column; /* Stack children vertically (app content, status bar) */
+    height: 100vh; /* Full viewport height */
+    position: relative; /* Needed for absolute positioning of the status bar */
+    padding-bottom: 28px; /* Space at the bottom for the status bar */
+    background-color: var(--bg-body); /* Apply body background color */
+    color: var(--text-light); /* Apply default text color */
+    font-size: 15px; /* Base font size */
+    line-height: 1.5; /* Base line height */
+}
+
+/* Status Bar (Footer Style) */
+/* Styles the status bar fixed at the bottom of the screen. */
+.status-bar {
+    padding: 4px 12px; /* Inner spacing */
+    background-color: var(--bg-sidebar); /* Background color */
+    border-top: 1px solid var(--border-color); /* Top border */
+    flex-shrink: 0; /* Prevent shrinking when content grows */
+    font-size: 0.85em; /* Smaller font size */
+    color: var(--text-secondary); /* Secondary text color */
+    line-height: 1.4; /* Adjust line height */
+    position: absolute; /* Position relative to the body */
+    bottom: 0; /* Stick to the bottom */
+    left: 0; /* Stretch across the width */
+    right: 0; /* Stretch across the width */
+    height: 28px; /* Fixed height */
+    z-index: 10; /* Ensure it's above other content if overlap occurs */
+}
+
+/* Registration Area */
+/* Styles the initial view where the user enters their identifier. */
+#registration-area {
+    padding: 20px; /* Inner spacing */
+    text-align: center; /* Center-align text */
+    display: block; /* Initially shown (JS hides it later) */
+    height: calc(100% - 28px); /* Fill height minus status bar */
+    display: flex; /* Use flexbox for centering */
+    flex-direction: column; /* Stack label, input, button vertically */
+    justify-content: center; /* Center vertically */
+    align-items: center; /* Center horizontally */
+}
+/* Style for the label in the registration area. */
+#registration-area label {
+    margin-right: 5px; /* Space to the right (if needed) */
+    color: var(--text-secondary); /* Secondary text color */
+    margin-bottom: 10px; /* Space below the label */
+    display: block; /* Ensure it takes its own line */
+}
+/* Style for the input field in the registration area. */
+#registration-area input {
+    margin-right: 5px; /* Space to the right */
+    margin-bottom: 15px; /* Space below the input */
+    min-width: 220px; /* Minimum width */
+    text-align: center; /* Center the placeholder/text */
+}
+
+
+/* Main App Layout */
+/* Container for the sidebar and main content area, hidden initially. */
+#app-container {
+    display: none; /* Hidden by default, JS changes to 'flex' after registration */
+    height: 100%; /* Fill the available height */
+    /* display: flex; */ /* This will be set by JS */
+    overflow: hidden; /* Prevent content overflow from breaking layout */
+}
+
+/* Sidebar */
+/* Styles the left sidebar containing user info, chat initiation, and session list. */
+#sidebar {
+    width: 240px; /* Fixed width */
+    flex-shrink: 0; /* Prevent shrinking */
+    border-right: 1px solid var(--border-color); /* Border separating from main content */
+    padding: 15px; /* Inner spacing */
+    display: flex; /* Use flexbox for vertical layout */
+    flex-direction: column; /* Stack children vertically */
+    background-color: var(--bg-sidebar); /* Sidebar background color */
+    overflow-y: auto; /* Allow vertical scrolling if content exceeds height */
+}
+
+/* Displays the user's registered identifier in the sidebar. */
+#my-identifier-display {
+    margin-bottom: 20px; /* Space below */
+    font-weight: normal; /* Normal font weight for the label */
+    word-wrap: break-word; /* Wrap long IDs */
+    color: var(--text-secondary); /* Secondary text color for the label */
+    border-bottom: 1px solid var(--border-color); /* Separator line */
+    padding-bottom: 10px; /* Space below the text, above the line */
+    font-size: 0.9em; /* Slightly smaller font */
+}
+/* Styles the actual identifier text within the display area. */
+#my-identifier-display strong {
+    color: var(--accent-green); /* Use accent color for the ID */
+    font-weight: bold; /* Make the ID bold */
+    display: block; /* Put ID on its own line */
+    margin-top: 4px; /* Space above the ID */
+    font-size: 1.1em; /* Slightly larger font for the ID */
+}
+
+/* Area in the sidebar for initiating a new chat. */
+#initiation-area {
+    margin-bottom: 20px; /* Space below this section */
+}
+/* Styles labels within the initiation area. */
+#initiation-area label {
+    display: block; /* Label on its own line */
+    margin-bottom: 5px; /* Space below label */
+    font-size: 0.9em; /* Smaller font size */
+    color: var(--text-secondary); /* Secondary text color */
+}
+/* Styles input field within the initiation area. */
+#initiation-area input {
+    display: block; /* Input on its own line */
+    margin-bottom: 8px; /* Space below input */
+    width: 100%; /* Full width of the sidebar padding */
+    box-sizing: border-box; /* Include padding/border in width */
+}
+/* Styles button within the initiation area. */
+#initiation-area button {
+    width: 100%; /* Full width button */
+}
+
+/* Container for the list of active/pending chat sessions. */
+#session-list-container {
+    margin-top: 15px; /* Space above */
+    border-top: 1px solid var(--border-color); /* Separator line */
+    padding-top: 10px; /* Space below the line */
+    flex-grow: 1; /* Allow this container to grow and fill remaining sidebar space */
+    min-height: 100px; /* Minimum height */
+    overflow-y: auto; /* Allow scrolling if list is long */
+}
+/* Styles the "Sessions" heading. */
+#session-list-container h2 {
+    margin-top: 0; /* Remove default top margin */
+    margin-bottom: 10px; /* Space below heading */
+    font-size: 0.9em; /* Smaller font size */
+    color: var(--text-secondary); /* Secondary text color */
+    text-transform: uppercase; /* Uppercase text */
+    letter-spacing: 1px; /* Add letter spacing */
+    padding-bottom: 8px; /* Space below text, above line */
+    border-bottom: 1px solid var(--border-color); /* Separator line */
+}
+
+/* Styles the unordered list holding the session items. */
+#session-list {
+    list-style: none; /* Remove default bullet points */
+    padding: 0; /* Remove default padding */
+    margin: 0; /* Remove default margin */
+}
+
+/* Styles individual session list items (<li>). */
+#session-list li {
+    padding: 10px 8px; /* Inner spacing */
+    border-bottom: 1px solid var(--border-color); /* Separator line between items */
+    cursor: pointer; /* Indicate interactivity */
+    display: flex; /* Use flexbox for layout (text + notification dot) */
+    justify-content: space-between; /* Push text and dot apart */
+    align-items: center; /* Vertically align text and dot */
+    word-wrap: break-word; /* Wrap long peer IDs */
+    transition: background-color 0.15s ease; /* Smooth background transition on hover */
+    border-radius: 3px; /* Slightly rounded corners */
+    margin-bottom: 2px; /* Small space between items */
+}
+/* Remove border from the last item in the list. */
+#session-list li:last-child {
+    border-bottom: none;
+}
+
+/* Style for session list items on hover. */
+#session-list li:hover {
+    background-color: var(--bg-list-hover); /* Apply hover background color */
+}
+
+/* Style for the currently active/selected session list item. */
+#session-list li.active-session {
+    background-color: var(--bg-list-active); /* Apply active background color */
+    font-weight: bold; /* Make text bold */
+    color: var(--text-light-strong); /* Use stronger text color */
+}
+
+/* Animation definition for the notification dot pulse. */
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7); } /* Start with shadow */
+  70% { box-shadow: 0 0 0 6px rgba(244, 67, 54, 0); } /* Expand shadow and fade */
+  100% { box-shadow: 0 0 0 0 rgba(244, 67, 54, 0); } /* End with no shadow */
+}
+
+/* Styles the notification dot indicating unread messages. */
+#session-list li .notification-dot {
+    display: inline-block; /* Allow width/height */
+    width: 10px; /* Dot size */
+    height: 10px; /* Dot size */
+    background-color: var(--accent-red); /* Red color */
+    border-radius: 50%; /* Make it circular */
+    margin-left: 8px; /* Space to the left of the dot */
+    flex-shrink: 0; /* Prevent dot from shrinking */
+    display: none; /* Hidden by default */
+    animation: pulse 1.5s infinite; /* Apply the pulse animation */
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7); /* Initial shadow state for animation */
+}
+
+/* Makes the notification dot visible when the list item has the 'has-unread' class. */
+#session-list li.has-unread .notification-dot {
+    display: inline-block; /* Show the dot */
+}
+
+
+/* Main Content Area */
+/* Styles the main area to the right of the sidebar where different views are displayed. */
+#main-content {
+    flex-grow: 1; /* Allow this area to take up remaining horizontal space */
+    padding: 15px 20px; /* Inner spacing */
+    display: flex; /* Use flexbox */
+    flex-direction: column; /* Stack content vertically */
+    overflow: hidden; /* Prevent content overflow */
+    background-color: var(--bg-main); /* Background color */
+}
+
+/* Panes within Main Content - Controlled by JS */
+/* Styles for the default welcome message shown when no chat is active. */
+#welcome-message {
+    text-align: center; /* Center text */
+    margin: auto; /* Center the block horizontally and vertically */
+    color: var(--text-secondary); /* Secondary text color */
+    max-width: 550px; /* Limit width for readability */
+    line-height: 1.7; /* Increase line height */
+    /* display: none; */ /* Initially hidden/shown by JS */
+}
+/* Styles the main heading in the welcome message. */
+#welcome-message h2 {
+    color: var(--text-light-strong); /* Stronger text color */
+    margin-bottom: 25px; /* Space below heading */
+    font-weight: 300; /* Lighter font weight */
+    font-size: 1.8em; /* Larger font size */
+}
+/* Styles paragraphs within the welcome message. */
+#welcome-message p {
+    margin-bottom: 15px; /* Space below paragraphs */
+    font-size: 1.05em; /* Slightly larger font size */
+}
+/* Styles the highlighted user ID within the welcome message. */
+#welcome-message strong {
+    color: var(--accent-green); /* Use accent color */
+    font-weight: 600; /* Semi-bold weight */
+}
+
+/* Styles the area displayed when an incoming chat request is received. */
+#incoming-request-area {
+    padding: 20px; /* Inner spacing */
+    border: 1px dashed var(--border-color-info); /* Dashed border */
+    margin: 30px auto; /* Top/bottom margin, centered horizontally */
+    background-color: var(--bg-info); /* Info background color */
+    text-align: center; /* Center text */
+    max-width: 450px; /* Limit width */
+    border-radius: 5px; /* Rounded corners */
+    color: var(--text-info); /* Info text color */
+    /* display: none; */ /* Initially hidden/shown by JS */
+}
+/* Styles buttons within the incoming request area. */
+#incoming-request-area button {
+    margin: 15px 5px 0 5px; /* Top margin, side margins */
+}
+
+/* Styles the area used to display information like denials, timeouts, or errors. */
+#info-area {
+    display: none; /* Initially hidden/shown by JS */
+    padding: 20px; /* Inner spacing */
+    border: 1px solid var(--text-error); /* Use error text color for border */
+    background-color: var(--bg-danger-info); /* Danger info background */
+    color: var(--text-light); /* Standard light text */
+    text-align: center; /* Center text */
+    margin: 30px auto; /* Top/bottom margin, centered horizontally */
+    max-width: 450px; /* Limit width */
+    border-radius: 5px; /* Rounded corners */
+}
+/* Styles paragraphs within the info area. */
+#info-area p {
+    margin-top: 0; /* Remove default top margin */
+    margin-bottom: 15px; /* Space below paragraph */
+    line-height: 1.6; /* Adjust line height */
+}
+/* Styles buttons within the info area. */
+#info-area button {
+    margin: 15px 5px 0 5px; /* Top margin, side margins */
+}
+/* Styles the retry button specifically (initially hidden). */
+#retry-request-button {
+    display: none; /* Hidden by default, shown by JS if retry is applicable */
+}
+
+/* Styles the area shown when the user has initiated a chat and is waiting for the peer to respond. */
+#waiting-response-area {
+    display: none; /* Initially hidden/shown by JS */
+    padding: 20px; /* Inner spacing */
+    border: 1px dashed var(--border-color-info); /* Dashed border */
+    background-color: var(--bg-info); /* Info background color */
+    color: var(--text-info); /* Info text color */
+    text-align: center; /* Center text */
+    margin: 30px auto; /* Top/bottom margin, centered horizontally */
+    max-width: 450px; /* Limit width */
+    border-radius: 5px; /* Rounded corners */
+}
+/* Styles paragraphs within the waiting area. */
+#waiting-response-area p {
+    margin-top: 0; /* Remove default top margin */
+    margin-bottom: 15px; /* Space below paragraph */
+}
+/* Styles the cancel button within the waiting area. */
+#waiting-response-area button {
+    margin-top: 15px; /* Space above the button */
+}
+
+
+/* Active Chat Area */
+/* Container for the currently active chat session view. */
+#active-chat-area {
+    flex-grow: 1; /* Allow this area to fill the main content space */
+    display: none; /* Hidden by default, shown by JS when a chat is active */
+    flex-direction: column; /* Stack header, messages, input vertically */
+    overflow: hidden; /* Prevent content overflow */
+}
+
+/* Styles the header within the active chat area (shows peer ID, disconnect button). */
+#chat-header {
+    padding-bottom: 12px; /* Space below the header text/button */
+    border-bottom: 1px solid var(--border-color); /* Separator line */
+    margin-bottom: 12px; /* Space below the line, above message area */
+    flex-shrink: 0; /* Prevent header from shrinking */
+    font-size: 1.1em; /* Slightly larger font */
+    color: var(--text-secondary); /* Secondary text color for the label */
+    display: flex; /* Use flexbox for layout */
+    justify-content: space-between; /* Push peer ID and button apart */
+    align-items: center; /* Vertically align items */
+}
+/* Styles the peer's ID within the chat header. */
+#chat-header strong {
+    color: var(--text-light-strong); /* Stronger text color for the ID */
+}
+/* Styles the disconnect button within the chat header. */
+#chat-header #disconnect-button {
+    margin-top: 0; /* Override default button margin */
+    padding: 4px 10px; /* Smaller padding */
+    font-size: 0.85em; /* Smaller font size */
+    background-color: var(--bg-button-danger); /* Danger background color */
+    border-color: var(--border-color-danger); /* Danger border color */
+    color: var(--text-light); /* Light text color */
+    cursor: pointer; /* Indicate interactivity */
+    transition: background-color 0.15s ease, border-color 0.15s ease; /* Smooth transitions */
+}
+/* Styles the disconnect button on hover. */
+#chat-header #disconnect-button:hover {
+    background-color: var(--bg-button-danger-hover); /* Darker danger background */
+    border-color: var(--accent-red); /* Use accent red for border */
+}
+
+/* Styles the main area where chat messages are displayed. */
+#message-area {
+    flex-grow: 1; /* Allow message area to fill vertical space */
+    overflow-y: scroll; /* Enable vertical scrolling for messages */
+    border: 1px solid var(--border-color); /* Border around the area */
+    margin-bottom: 10px; /* Space below messages, before typing indicator/input */
+    padding: 10px; /* Inner spacing */
+    background-color: var(--bg-message-area); /* Specific background for messages */
+}
+
+/* IRC Style Message Display */
+/* Styles individual message containers (divs) within the message area. */
+#message-area div {
+    margin-bottom: 4px; /* Space between messages */
+    padding: 2px 5px; /* Small padding around message content */
+    word-wrap: break-word; /* Wrap long words/messages */
+    line-height: 1.5; /* Ensure consistent line height */
+}
+
+/* Styles system messages (e.g., connection status, errors within chat). */
+.message-system {
+    color: var(--text-sender-system); /* System message text color */
+    font-style: italic; /* Italicize system messages */
+    text-align: left; /* Align left */
+    background-color: var(--bg-message-system); /* Subtle background */
+    border-radius: 3px; /* Rounded corners */
+}
+
+/* Styles the timestamp prefix for each message. */
+.message-timestamp {
+    color: var(--text-secondary); /* Secondary text color */
+    font-size: 0.8em; /* Smaller font size */
+    margin-right: 8px; /* Space between timestamp and sender */
+    display: inline-block; /* Keep on the same line */
+}
+
+/* Styles the sender prefix (e.g., <Alice>) for each message. */
+.message-sender {
+    font-weight: bold; /* Make sender bold */
+    margin-right: 8px; /* Space between sender and message text */
+    display: inline-block; /* Keep on the same line */
+}
+/* Applies specific color for the peer's sender name. */
+.message-sender.sender-peer {
+     color: var(--text-sender-peer);
+}
+/* Applies specific color for the user's own sender name. */
+.message-sender.sender-own {
+     color: var(--text-sender-own);
+}
+/* Applies specific color for the system message prefix. */
+.message-sender.sender-system {
+     color: var(--text-sender-system);
+}
+
+/* Styles the actual text content of a message. */
+.message-text {
+    display: inline; /* Keep on the same line as sender */
+    color: var(--text-light); /* Default light text color */
+}
+
+/* --- NEW: Typing Indicator Styling --- */
+/* Styles the container area reserved for the typing indicator below the message area. */
+#typing-indicator-area {
+    height: 20px; /* Reserve a fixed height for the indicator */
+    flex-shrink: 0; /* Prevent this area from shrinking */
+    padding: 0 5px 5px 5px; /* Padding below the text, inside the area */
+    overflow: hidden; /* Hide text if it somehow overflows the reserved height */
+}
+/* Styles the text element that shows "Peer is typing...". */
+#typing-indicator-text {
+    font-size: 0.9em; /* Slightly smaller font */
+    font-style: italic; /* Italicize the text */
+    color: var(--text-secondary); /* Use secondary text color */
+    display: none; /* Hidden by default, shown by JS */
+}
+/* ----------------------------------- */
+
+
+/* Styles the container for the message input field and send button. */
+#message-input-area {
+    display: flex; /* Use flexbox for side-by-side layout */
+    flex-shrink: 0; /* Prevent this area from shrinking */
+    margin-top: 5px; /* Space above the input area (below typing indicator) */
+}
+
+/* Styles the text input field for typing messages. */
+#message-input {
+    flex-grow: 1; /* Allow input field to take up available space */
+    margin-right: 8px; /* Space between input field and send button */
+}
+
+/* Styles the send button specifically within the input area. */
+#message-input-area button {
+    padding: 8px 15px; /* Standard button padding */
+}
+
+/* General Input/Button Styling */
+/* Base styles for all text input fields. */
+input[type="text"] {
+    background-color: var(--bg-input); /* Input background color */
+    color: var(--text-light); /* Text color */
+    border: 1px solid var(--border-color-input); /* Input border color */
+    padding: 9px 10px; /* Inner padding */
+    border-radius: 3px; /* Rounded corners */
+    font-size: inherit; /* Use the font size of the parent element */
+    transition: border-color 0.15s ease, box-shadow 0.15s ease; /* Smooth transitions for focus */
+}
+/* Styles for text input fields when they have focus. */
+input[type="text"]:focus {
+    outline: none; /* Remove default browser outline */
+    border-color: var(--accent-blue); /* Use blue accent color for border */
+    box-shadow: 0 0 0 2px rgba(0, 122, 204, 0.3); /* Add a subtle blue glow */
+}
+/* Styles for disabled text input fields. */
+input[type="text"]:disabled {
+    background-color: #444; /* Darker background */
+    cursor: not-allowed; /* Indicate non-interactivity */
+    opacity: 0.6; /* Reduce opacity */
+}
+
+/* Base styles for all buttons. */
+button {
+    padding: 8px 15px; /* Default padding */
+    cursor: pointer; /* Indicate interactivity */
+    border: 1px solid var(--border-color); /* Default border */
+    border-radius: 3px; /* Rounded corners */
+    background-color: var(--bg-button); /* Default background */
+    color: var(--text-light-strong); /* Default text color */
+    font-size: 0.95em; /* Slightly smaller font size */
+    transition: background-color 0.15s ease, border-color 0.15s ease; /* Smooth transitions */
+}
+/* Styles for buttons on hover. */
+button:hover {
+    background-color: var(--bg-button-hover); /* Hover background color */
+    border-color: #666; /* Slightly lighter border */
+}
+/* Styles for buttons when actively being clicked. */
+button:active {
+     background-color: var(--bg-button-active); /* Active background color */
+}
+/* Styles for disabled buttons. */
+button:disabled {
+    background-color: var(--bg-button-disabled); /* Disabled background */
+    border-color: var(--border-color-input); /* Use input border color */
+    color: var(--text-button-disabled); /* Disabled text color */
+    cursor: not-allowed; /* Indicate non-interactivity */
+    opacity: 0.6; /* Reduce opacity */
+}
+
+/* Dark Scrollbar Styling (WebKit/Blink - Chrome, Safari, Edge, Opera) */
+/* Styles the scrollbar track and thumb for a dark theme. */
+::-webkit-scrollbar {
+  width: 10px; /* Width of vertical scrollbar */
+  height: 10px; /* Height of horizontal scrollbar */
+}
+/* Styles the background of the scrollbar track. */
+::-webkit-scrollbar-track {
+  background: var(--bg-sidebar); /* Use sidebar background for track */
+}
+/* Styles the draggable scrollbar thumb. */
+::-webkit-scrollbar-thumb {
+  background-color: #555; /* Dark grey thumb color */
+  border-radius: 5px; /* Rounded thumb */
+  border: 2px solid var(--bg-sidebar); /* Create padding around thumb */
+}
+/* Styles the thumb on hover. */
+::-webkit-scrollbar-thumb:hover {
+  background-color: #777; /* Lighter grey on hover */
+}
+/* Styles the corner where vertical and horizontal scrollbars meet. */
+::-webkit-scrollbar-corner {
+  background: var(--bg-sidebar); /* Match track background */
+}
+
+/* Dark Scrollbar Styling (Firefox) */
+/* Styles the scrollbar for Firefox using standard properties. */
+* {
+  scrollbar-width: thin; /* Use thin scrollbars */
+  scrollbar-color: #555 var(--bg-sidebar); /* thumb color, track color */
+}

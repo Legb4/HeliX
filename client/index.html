@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <!-- Basic HTML document metadata -->
+    <meta charset="UTF-8"> <!-- Specifies the character encoding for the document (UTF-8 is standard) -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Configures the viewport for responsive design -->
+    <title>HeliX Chat</title> <!-- Sets the title displayed in the browser tab or window title bar -->
+
+    <!-- Link to the external CSS file for styling -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <!-- The main content visible to the user -->
+
+    <!-- Registration Area (Shown first, before user is registered) -->
+    <!-- This div contains the input field and button for the user to enter their desired temporary ID. -->
+    <!-- It's hidden by JavaScript after successful registration. -->
+    <div id="registration-area">
+        <label for="identifier-input">Choose a temporary ID:</label>
+        <input type="text" id="identifier-input" placeholder="e.g., Alice123"> <!-- Input field for the ID -->
+        <button id="register-button">Register</button> <!-- Button to submit the ID -->
+    </div>
+
+    <!-- Main Application Container (Hidden until registered) -->
+    <!-- This div holds the main chat interface (sidebar and content area). -->
+    <!-- It's displayed by JavaScript after successful registration. -->
+    <div id="app-container">
+
+        <!-- Sidebar -->
+        <!-- Contains user info, controls to start new chats, and the list of current sessions. -->
+        <div id="sidebar">
+            <!-- Displays the user's own registered identifier -->
+            <div id="my-identifier-display">Your ID: <strong id="my-identifier"></strong></div>
+            <!-- Area for initiating a new chat session -->
+            <div id="initiation-area">
+                <label for="peer-id-input">Start chat with ID:</label>
+                <input type="text" id="peer-id-input" placeholder="e.g., Bob456"> <!-- Input for the peer's ID -->
+                <button id="start-chat-button">Start Chat</button> <!-- Button to initiate the chat -->
+            </div>
+            <!-- Container for the list of active and pending chat sessions -->
+            <div id="session-list-container">
+                <h2>Sessions</h2> <!-- Heading for the session list -->
+                <ul id="session-list">
+                    <!-- Session list items (<li>) will be added here dynamically by JavaScript -->
+                    <!-- Each item will typically contain the peer's ID and potentially a notification dot -->
+                </ul>
+            </div>
+        </div> <!-- End sidebar -->
+
+        <!-- Main Content Area -->
+        <!-- This area displays different views depending on the application state (welcome, active chat, incoming request, etc.). -->
+        <div id="main-content">
+
+            <!-- Welcome Message (Shown when registered but no chat selected) -->
+            <!-- This is the default view after registration. -->
+            <div id="welcome-message">
+                <h2>Welcome to HeliX Chat!</h2>
+                <p>Your secure, ephemeral E2EE chat application.</p>
+                <p>Use the sidebar to start a new chat by entering a peer's ID, or wait for an incoming request.</p>
+                <p>Remember to share your ID (<strong id="my-identifier-welcome"></strong>) with others out-of-band.</p> <!-- Displays user's ID again -->
+            </div>
+
+            <!-- Incoming Request Area (Shown temporarily when a peer requests a chat) -->
+            <!-- This view allows the user to accept or deny an incoming chat request. -->
+            <div id="incoming-request-area">
+                <div id="incoming-request-text"></div> <!-- Text displaying who sent the request -->
+                <button id="accept-button">Accept</button> <!-- Button to accept the request -->
+                <button id="deny-button">Deny</button> <!-- Button to deny the request -->
+            </div>
+
+            <!-- Info Area (Shown for Denials, Timeouts, Errors related to a session) -->
+            <!-- This view displays messages like "Request denied", "Request timed out", etc. -->
+            <div id="info-area">
+                <p id="info-message"></p> <!-- The specific information message -->
+                <button id="retry-request-button">Retry</button> <!-- Button to retry a timed-out request (shown conditionally) -->
+                <button id="close-info-button">Close</button> <!-- Button to dismiss the info message and reset the session view -->
+            </div>
+
+            <!-- Waiting for Response Area (Shown after initiating a chat, before peer responds) -->
+            <!-- This view indicates that the application is waiting for the peer to accept/deny the request. -->
+            <div id="waiting-response-area">
+                <p id="waiting-response-text"></p> <!-- Text indicating waiting status (e.g., "Waiting for PeerID...") -->
+                <button id="cancel-request-button">Cancel Request</button> <!-- Button to cancel the outgoing request -->
+            </div>
+
+            <!-- Active Chat Area (Shown when a chat session is established and selected) -->
+            <!-- This is the main chat view containing the message history and input field. -->
+            <div id="active-chat-area">
+                <!-- Header for the active chat, showing peer ID and disconnect button -->
+                <div id="chat-header">
+                    <span>Chatting with: <strong id="peer-identifier"></strong></span> <!-- Displays the peer's ID -->
+                    <button id="disconnect-button">Disconnect</button> <!-- Button to end the current chat session -->
+                </div>
+                <!-- Area where chat messages are displayed -->
+                <div id="message-area">
+                    <!-- Messages (divs) will be added here dynamically by JavaScript -->
+                </div>
+                <!-- *** NEW: Typing Indicator Area *** -->
+                <!-- This div holds the text indicating if the peer is currently typing. -->
+                <div id="typing-indicator-area" class="typing-indicator-area">
+                    <span id="typing-indicator-text"></span> <!-- Text like "PeerID is typing..." appears here (controlled by JS/CSS) -->
+                </div>
+                <!-- ******************************** -->
+                <!-- Area containing the message input field and send button -->
+                <div id="message-input-area">
+                    <input type="text" id="message-input" placeholder="Type your message..."> <!-- Input field for typing messages -->
+                    <button id="send-button">Send</button> <!-- Button to send the typed message -->
+                </div>
+            </div> <!-- End active-chat-area -->
+
+        </div> <!-- End main-content -->
+
+    </div> <!-- End app-container -->
+
+    <!-- Status Bar (Fixed at the bottom) -->
+    <!-- Displays the current connection status or other relevant information. -->
+    <div id="status" class="status-bar">Status: Initializing...</div>
+
+
+    <!-- Load JavaScript Files -->
+    <!-- Scripts are loaded at the end of the body to ensure the DOM is parsed before they run. -->
+    <!-- Order is important: dependencies must be loaded before scripts that use them. -->
+    <script src="js/config.js"></script> <!-- Configuration (e.g., WebSocket URL) -->
+    <script src="js/WebSocketClient.js"></script> <!-- Handles WebSocket connection and communication -->
+    <script src="js/UIController.js"></script> <!-- Manages DOM manipulation and UI updates -->
+    <script src="js/CryptoModule.js"></script> <!-- Handles cryptographic operations (Web Crypto API) -->
+    <script src="js/Session.js"></script> <!-- Represents and manages a single chat session state -->
+    <script src="js/SessionManager.js"></script> <!-- Orchestrates sessions, UI, and WebSocket communication -->
+    <script src="js/main.js"></script> <!-- Entry point: initializes components and binds events -->
+</body>
+</html>

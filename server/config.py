@@ -1,0 +1,36 @@
+# server/config.py
+# This file centralizes configuration settings for the Python WebSocket server.
+
+import os # Import the 'os' module to help construct file paths reliably.
+
+# --- Network Configuration ---
+
+# The IP address the WebSocket server should listen on.
+# '0.0.0.0' means listen on all available network interfaces (e.g., localhost, LAN IP).
+# Use '127.0.0.1' or 'localhost' to only allow connections from the same machine.
+HOST = '0.0.0.0'
+
+# The port number the WebSocket server should listen on.
+# This must match the port specified in the client's 'config.js' (webSocketUrl).
+PORT = 5678 # Keep WebSocket port the same for now
+
+# --- SSL Configuration ---
+# Settings related to enabling Secure WebSockets (WSS) using TLS/SSL certificates.
+
+# Define the directory where SSL certificate files are expected to be located.
+# os.path.dirname(__file__) gets the directory containing this config.py file.
+# os.path.join then constructs a path like '<parent_directory>/certs/'.
+CERT_DIR = os.path.join(os.path.dirname(__file__), '..', 'certs')
+
+# Define the expected filename for the SSL certificate file (public key).
+# This should be the certificate generated (e.g., by mkcert).
+CERT_FILE = os.path.join(CERT_DIR, 'cert.pem')
+
+# Define the expected filename for the SSL private key file.
+# This should be the private key corresponding to the certificate.
+KEY_FILE = os.path.join(CERT_DIR, 'key.pem')
+
+# Master switch to enable or disable SSL/WSS.
+# Set to True to use WSS (requires valid CERT_FILE and KEY_FILE).
+# Set to False to use WS (unencrypted, generally only for local testing).
+ENABLE_SSL = True
