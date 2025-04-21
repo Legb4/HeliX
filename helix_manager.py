@@ -9,18 +9,23 @@
 #   - Generates/overwrites local TLS certificates (cert.pem, key.pem) for localhost/127.0.0.1.
 #   - Offers to back up existing certificates before overwriting.
 # - Allows viewing and modifying configuration settings (WSS Host/Port, HTTPS Host/Port).
-# - Saves WSS and HTTPS configuration changes persistently to server/config.py. # <-- Updated description
+# - Saves WSS and HTTPS configuration changes persistently to server/config.py.
 # - Starts both the WebSocket Secure (WSS) server (as a subprocess) and
-#   an integrated HTTPS server (in a separate thread) to serve client files.
-#   (Requires certificates to exist before starting).
+#   an integrated HTTPS server (in a separate thread) to serve client files locally.
+# - Optionally starts the servers with a Cloudflare Tunnel:
+#   - Checks for 'cloudflared' executable and provides installation instructions if missing.
+#   - Starts a temporary tunnel using 'cloudflared'.
+#   - Captures the public tunnel URL.
+#   - Automatically updates the client's config.js with the public WSS URL.
+#   - Reverts the client's config.js on shutdown.
 # - Displays real-time logs from the WSS server to the console.
 # - Logs HTTPS server activity to a file (logs/https_server.log).
-# - Handles graceful shutdown of both servers on Ctrl+C.
+# - Handles graceful shutdown of all servers/processes on Ctrl+C.
 
-import subprocess         # For running external processes (WSS server, pip, mkcert).
+import subprocess         # For running external processes (WSS server, pip, mkcert, cloudflared).
 import sys                # For accessing Python interpreter path and exiting.
 import os                 # For path manipulation (finding files, creating dirs, renaming).
-import re                 # For regular expressions used in config file parsing.
+import re                 # For regular expressions used in config file parsing and editing.
 import importlib.util     # For checking if a library is installed without importing it.
 import threading          # For running the HTTPS server and WSS logger concurrently.
 import time               # For pausing execution (e.g., in wait loops).
@@ -30,13 +35,15 @@ import logging            # For logging HTTPS server activity to a file.
 import platform           # For detecting the operating system (Windows, Linux, Darwin).
 import shutil             # For finding executables in PATH (shutil.which).
 from socketserver import ThreadingMixIn # To make the HTTPS server handle requests in threads.
+from functools import partial # Used for creating the HTTPS request handler with directory
 
 # --- Constants ---
 # Define file paths relative to the location of this script for portability.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) # Absolute path to script's directory.
-# CONFIG_FILE_PATH replaces WSS_CONFIG_PATH as it now handles more settings.
 CONFIG_FILE_PATH = os.path.join(SCRIPT_DIR, 'server', 'config.py') # Path to server config file.
 HTTPS_CLIENT_DIR = os.path.join(SCRIPT_DIR, 'client') # Path to the client files directory.
+# Define the path to the client-side JavaScript configuration file. (NEW)
+CLIENT_CONFIG_PATH = os.path.join(HTTPS_CLIENT_DIR, 'js', 'config.js')
 CERT_DIR = os.path.join(SCRIPT_DIR, 'certs') # Path to the SSL certificates directory.
 CERT_FILE = os.path.join(CERT_DIR, 'cert.pem') # Expected SSL certificate filename.
 KEY_FILE = os.path.join(CERT_DIR, 'key.pem') # Expected SSL private key filename.
@@ -52,6 +59,9 @@ wss_process = None      # Holds the subprocess.Popen object for the WSS server.
 https_server = None     # Holds the http.server.HTTPServer instance.
 https_thread = None     # Holds the threading.Thread object for the HTTPS server.
 wss_log_thread = None   # Holds the threading.Thread object for the WSS logger.
+cloudflared_process = None # Holds the subprocess.Popen object for the cloudflared tunnel. (NEW)
+# Holds the original WebSocket URL from client/js/config.js before tunnel modification. (NEW)
+original_client_wss_url = None
 stop_event = threading.Event() # A synchronization primitive used to signal threads (like the WSS logger) to stop gracefully.
 
 # --- Logging Setup for HTTPS Server ---
@@ -115,6 +125,43 @@ def check_or_install_websockets():
         # Library already installed.
         print("'websockets' library found.")
 
+def check_cloudflared_availability():
+    """
+    Checks if the 'cloudflared' executable is available in the system PATH.
+    If not found, provides OS-specific installation instructions.
+
+    Returns:
+        str | None: The full path to the 'cloudflared' executable if found, otherwise None.
+    """
+    print("Checking for 'cloudflared' executable...")
+    # Use shutil.which to search the system's PATH environment variable.
+    cloudflared_path = shutil.which("cloudflared")
+
+    if cloudflared_path:
+        # Executable found in PATH.
+        print(f"Found 'cloudflared' executable at: {cloudflared_path}")
+        return cloudflared_path
+    else:
+        # Executable not found. Provide instructions.
+        print("\nError: 'cloudflared' command not found in your system PATH.")
+        system = platform.system()
+        print("Installation Instructions:")
+        if system == "Linux":
+            print("  Debian/Ubuntu: sudo apt update && sudo apt install cloudflared")
+            print("  (Check your specific distribution's package manager if different)")
+        elif system == "Windows":
+            print("  Using Winget (Recommended): winget install --id Cloudflare.cloudflared")
+            print("  Using Chocolatey: choco install cloudflared")
+        elif system == "Darwin": # macOS
+            print("  Using Homebrew (Recommended): brew install cloudflared")
+        else:
+            print(f"  Unsupported OS ({system}) for automatic instructions.")
+
+        print("\nAlternatively, download directly or find instructions for other systems at:")
+        print("  https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/")
+        print("\nPlease install 'cloudflared' and ensure it's in your system PATH, then restart the manager.")
+        return None # Indicate failure to find the executable.
+
 # --- Certificate Generation ---
 def generate_certificates():
     """
@@ -136,16 +183,21 @@ def generate_certificates():
     system = platform.system()
     print(f"Detected OS: {system}")
     if system == "Windows":
-        # On Windows, expect mkcert.exe in the ./certs directory relative to this script
-        expected_path = os.path.join(CERT_DIR, "mkcert.exe")
-        if os.path.exists(expected_path):
-            mkcert_path = expected_path
-            print(f"Found mkcert at expected Windows location: {mkcert_path}")
+        # On Windows, first check PATH, then the expected relative path for backward compatibility/manual placement.
+        mkcert_path = shutil.which("mkcert")
+        if not mkcert_path:
+            expected_path = os.path.join(CERT_DIR, "mkcert.exe")
+            if os.path.exists(expected_path):
+                mkcert_path = expected_path
+                print(f"Found mkcert at expected Windows location: {mkcert_path}")
+            else:
+                 print(f"Error: 'mkcert.exe' not found in PATH or '{CERT_DIR}'.")
+                 print("Please install mkcert (e.g., 'winget install mkcert' or 'choco install mkcert')")
+                 print("or download from https://github.com/FiloSottile/mkcert/releases")
+                 print(f"and ensure 'mkcert.exe' is in your PATH or inside the '{CERT_DIR}' directory.")
+                 return False
         else:
-            print(f"Error: 'mkcert.exe' not found in '{CERT_DIR}'.")
-            print("Please download mkcert for Windows from https://github.com/FiloSottile/mkcert/releases")
-            print(f"and place 'mkcert.exe' inside the '{CERT_DIR}' directory.")
-            return False # Cannot proceed without mkcert
+             print(f"Found mkcert in PATH: {mkcert_path}")
     elif system in ["Linux", "Darwin"]: # Linux or macOS
         # On Linux/macOS, expect mkcert in the system PATH
         print("Searching for 'mkcert' in system PATH...")
@@ -318,69 +370,48 @@ def read_config():
 
             # --- WSS Settings Parsing ---
             # Search for the WSS HOST assignment line using regex.
-            # Looks for lines starting with 'HOST', followed by '=', optional whitespace,
-            # and captures the value within single or double quotes.
             wss_host_match = re.search(r"^HOST\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
             # Search for the WSS PORT assignment line using regex.
-            # Looks for lines starting with 'PORT', followed by '=', optional whitespace,
-            # and captures one or more digits.
             wss_port_match = re.search(r"^PORT\s*=\s*(\d+)", content, re.MULTILINE)
 
-            # Update WSS settings dictionary if matches were found in the file content.
+            # Update WSS settings dictionary if matches were found.
             if wss_host_match:
-                # Extract the captured host value (group 1 of the match).
                 settings['wss_host'] = wss_host_match.group(1)
             else:
-                # Inform the user if the HOST setting was not found.
                 print(f"Warning: Could not find WSS HOST setting in {config_file_path}, using default '{settings['wss_host']}'.")
 
             if wss_port_match:
-                # Extract the captured port value and convert it to an integer.
                 settings['wss_port'] = int(wss_port_match.group(1))
             else:
-                # Inform the user if the PORT setting was not found.
                 print(f"Warning: Could not find WSS PORT setting in {config_file_path}, using default {settings['wss_port']}.")
 
-            # --- HTTPS Settings Parsing --- (NEW SECTION)
+            # --- HTTPS Settings Parsing ---
             # Search for the HTTPS_HOST assignment line using regex.
-            # Similar logic to WSS HOST, but looks for 'HTTPS_HOST'.
             https_host_match = re.search(r"^HTTPS_HOST\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
             # Search for the HTTPS_PORT assignment line using regex.
-            # Similar logic to WSS PORT, but looks for 'HTTPS_PORT'.
             https_port_match = re.search(r"^HTTPS_PORT\s*=\s*(\d+)", content, re.MULTILINE)
 
             # Update HTTPS settings dictionary if matches were found.
             if https_host_match:
-                # Extract the captured HTTPS host value.
                 settings['https_host'] = https_host_match.group(1)
             else:
-                # Inform the user if the HTTPS_HOST setting was not found.
                 print(f"Warning: Could not find HTTPS_HOST setting in {config_file_path}, using default '{settings['https_host']}'.")
 
             if https_port_match:
-                # Extract the captured HTTPS port value and convert it to an integer.
                 settings['https_port'] = int(https_port_match.group(1))
             else:
-                # Inform the user if the HTTPS_PORT setting was not found.
                 print(f"Warning: Could not find HTTPS_PORT setting in {config_file_path}, using default {settings['https_port']}.")
 
     except FileNotFoundError:
         # Handle the case where the configuration file does not exist.
-        # Use the unified config file path constant in the message.
         print(f"Warning: {config_file_path} not found. Using default settings for WSS and HTTPS.")
     except Exception as e:
         # Catch any other potential errors during file reading or regex processing.
-        # Use the unified config file path constant in the message.
         print(f"Warning: Error reading {config_file_path}: {e}. Using default settings.")
 
-    # Display the final effective settings (either read from file or defaults).
     print("Initial settings loaded.")
-    # Optionally, display the loaded HTTPS settings too for confirmation.
-    # print(f"  WSS Target:   ws://{settings['wss_host']}:{settings['wss_port']}") # Note: ws:// prefix is illustrative
-    # print(f"  HTTPS Target: https://{settings['https_host']}:{settings['https_port']}")
     return settings
 
-# Renamed from write_wss_config to write_config as it now handles both WSS and HTTPS.
 def write_config(settings):
     """
     Writes the WSS (HOST, PORT) and HTTPS (HTTPS_HOST, HTTPS_PORT) settings
@@ -412,12 +443,10 @@ def write_config(settings):
 
         new_lines = []
         # Flags to track if each setting was found and updated within the existing lines.
-        # This prevents adding duplicate lines if a setting is matched and replaced.
         updated_flags = {'wss_host': False, 'wss_port': False, 'https_host': False, 'https_port': False}
 
         # Define the patterns to match the start of setting lines and their corresponding
         # keys in the settings dictionary and the format string for writing the new line.
-        # Using compiled regex for potential minor performance gain if called often.
         setting_patterns = {
             re.compile(r"^HOST\s*="): ('wss_host', "HOST = '{value}'\n"),
             re.compile(r"^PORT\s*="): ('wss_port', "PORT = {value}\n"),
@@ -443,13 +472,11 @@ def write_config(settings):
                 new_lines.append(line)
 
         # After processing all existing lines, check if any settings were NOT updated.
-        # This means they were not found in the original file content.
         appended_header = False # Flag to add a header only once if appending settings.
         for pattern, (key, format_str) in setting_patterns.items():
             if not updated_flags[key]:
                 # If this is the first setting being appended, add a newline and a comment header.
                 if not appended_header:
-                    # Ensure there's a newline before the header if appending to existing content.
                     if new_lines and not new_lines[-1].endswith('\n'):
                          new_lines.append('\n')
                     new_lines.append("\n# --- Settings added/updated by helix_manager ---\n")
@@ -471,17 +498,137 @@ def write_config(settings):
         print(f"Error writing configuration to {config_file_path}: {e}")
         return False # Indicate failure.
 
+def update_client_config(new_wss_url):
+    """
+    Updates the 'webSocketUrl' in the client/js/config.js file.
+    Stores the original URL in a global variable for later restoration.
+
+    Args:
+        new_wss_url (str): The new WebSocket URL to write into the config file.
+
+    Returns:
+        bool: True if the update was successful, False otherwise.
+    """
+    global original_client_wss_url # Access the global variable to store the original URL.
+    original_client_wss_url = None # Reset in case of previous failed attempts.
+
+    print(f"Attempting to update client config: {CLIENT_CONFIG_PATH}")
+    try:
+        # Read the entire content of the client config file.
+        with open(CLIENT_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Define the regex to find the webSocketUrl assignment line.
+        # It captures:
+        # Group 1: The part before the URL value (e.g., "webSocketUrl: '")
+        # Group 2: The current URL value itself (e.g., "wss://localhost:5678")
+        # Group 3: The part after the URL value (e.g., "'")
+        pattern = re.compile(r"(webSocketUrl\s*:\s*['\"])([^'\"]+)(['\"])", re.MULTILINE)
+
+        # Search for the pattern in the content.
+        match = pattern.search(content)
+
+        if not match:
+            # If the pattern is not found, we cannot update the file automatically.
+            print(f"Error: Could not find 'webSocketUrl' assignment in {CLIENT_CONFIG_PATH}.")
+            print("Please ensure the file exists and contains a line like: webSocketUrl: '...'")
+            return False
+
+        # Store the original URL found in group 2.
+        original_client_wss_url = match.group(2)
+        print(f"  Original client WSS URL found: '{original_client_wss_url}'")
+
+        # Construct the replacement string using the captured groups and the new URL.
+        # This preserves the original quoting style and surrounding code.
+        replacement = match.group(1) + new_wss_url + match.group(3)
+
+        # Replace the first occurrence of the pattern with the new replacement string.
+        new_content = pattern.sub(replacement, content, count=1)
+
+        # Write the modified content back to the file, overwriting the original.
+        with open(CLIENT_CONFIG_PATH, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+        print(f"  Successfully updated client WSS URL to: '{new_wss_url}'")
+        return True # Indicate success.
+
+    except FileNotFoundError:
+        print(f"Error: Client config file not found at {CLIENT_CONFIG_PATH}.")
+        return False
+    except Exception as e:
+        # Catch any other errors during file I/O or regex operations.
+        print(f"Error updating client config file {CLIENT_CONFIG_PATH}: {e}")
+        original_client_wss_url = None # Ensure original URL is cleared if update fails.
+        return False
+
+def revert_client_config():
+    """
+    Reverts the 'webSocketUrl' in client/js/config.js back to the
+    original value that was stored before the tunnel started.
+    This is typically called during shutdown.
+    """
+    global original_client_wss_url # Access the stored original URL.
+
+    # Only proceed if we have a stored original URL (meaning the config was likely modified).
+    if original_client_wss_url is None:
+        print("Skipping client config revert: No original URL stored.")
+        return
+
+    print(f"Attempting to revert client config: {CLIENT_CONFIG_PATH}")
+    try:
+        # Read the current content of the client config file.
+        with open(CLIENT_CONFIG_PATH, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # Use the same regex pattern as in the update function.
+        pattern = re.compile(r"(webSocketUrl\s*:\s*['\"])([^'\"]+)(['\"])", re.MULTILINE)
+
+        # Search for the pattern again.
+        match = pattern.search(content)
+
+        if not match:
+            # If the pattern is somehow missing now, we cannot revert automatically.
+            print(f"Error: Could not find 'webSocketUrl' assignment in {CLIENT_CONFIG_PATH} during revert.")
+            print(f"Manual check recommended. Expected original URL was: '{original_client_wss_url}'")
+            return # Don't attempt to write if the structure changed unexpectedly.
+
+        # Construct the replacement string using the stored original URL.
+        replacement = match.group(1) + original_client_wss_url + match.group(3)
+
+        # Replace the first occurrence with the original value.
+        new_content = pattern.sub(replacement, content, count=1)
+
+        # Write the reverted content back to the file.
+        with open(CLIENT_CONFIG_PATH, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+        print(f"  Successfully reverted client WSS URL to: '{original_client_wss_url}'")
+
+    except FileNotFoundError:
+        # Handle case where file might have been deleted between start and stop.
+        print(f"Warning: Client config file not found at {CLIENT_CONFIG_PATH} during revert.")
+    except Exception as e:
+        # Catch any other errors during the revert process.
+        print(f"Error reverting client config file {CLIENT_CONFIG_PATH}: {e}")
+        print(f"Manual check recommended. Expected original URL was: '{original_client_wss_url}'")
+    finally:
+        # Clear the stored original URL regardless of success or failure,
+        # as the tunnel session is ending.
+        original_client_wss_url = None
+
 
 def config_menu(settings):
     """
     Displays the main configuration menu, allowing the user to view/change
-    WSS and HTTPS settings, manage certificates, save settings, start the servers, or exit.
+    WSS and HTTPS settings, manage certificates, save settings, start servers
+    locally or with Cloudflare Tunnel, or exit.
 
     Args:
         settings (dict): The dictionary holding the current configuration values.
 
     Returns:
-        bool: True if the user chose to start the servers, False if they chose to exit.
+        str | None: 'local' if starting locally, 'tunnel' if starting with tunnel,
+                    None if exiting or staying in menu.
     """
     while True:
         # Display current settings and menu options.
@@ -492,10 +639,10 @@ def config_menu(settings):
         print(f"4. HTTPS Port:  {settings['https_port']}")
         print("------------------------------------")
         print("5. Manage TLS Certificates (Check/Generate/Install CA)")
-        # Updated option 6 text to reflect saving all settings.
-        print("6. Save Config and Start Servers")
-        print("7. Start Servers (Use Current Settings without Saving)")
-        print("8. Exit")
+        print("6. Save Config and Start Servers Locally")
+        print("7. Start Servers Locally (Use Current Settings without Saving)")
+        print("8. Start Servers with Cloudflare Tunnel (Requires 'cloudflared')") # NEW Option
+        print("9. Exit") # Renumbered Exit option
         print("------------------------------------")
 
         choice = input("Enter choice: ").strip()
@@ -536,7 +683,7 @@ def config_menu(settings):
                 print("Certificate process failed or was aborted. See messages above.")
             input("Press Enter to return to menu...")
             continue # Go back to menu display
-        elif choice == '6': # Save Config and Start
+        elif choice == '6': # Save Config and Start Locally
             # *** Pre-start Certificate Check ***
             if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
                 print("\nError: Certificate files (cert.pem, key.pem) are missing in './certs/'.")
@@ -544,14 +691,13 @@ def config_menu(settings):
                 input("Press Enter to return to menu...")
                 continue # Stay in menu
             # *** End Check ***
-            # Call the renamed write_config function to save all settings.
             if write_config(settings):
-                return True # Signal to main loop to start servers.
+                return 'local' # Signal to main loop to start servers locally.
             else:
                 # Stay in the menu if saving failed.
                 input("Failed to save config. Press Enter to return to menu...")
                 continue # Stay in menu
-        elif choice == '7': # Start without Saving
+        elif choice == '7': # Start Locally without Saving
             # *** Pre-start Certificate Check ***
             if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
                 print("\nError: Certificate files (cert.pem, key.pem) are missing in './certs/'.")
@@ -560,9 +706,25 @@ def config_menu(settings):
                 continue # Stay in menu
             # *** End Check ***
             print("Proceeding without saving config...")
-            return True # Signal to main loop to start servers.
-        elif choice == '8': # Exit
-            return False # Signal to main loop to exit.
+            return 'local' # Signal to main loop to start servers locally.
+        elif choice == '8': # Start with Cloudflare Tunnel
+            # *** Pre-start Certificate Check ***
+            if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
+                print("\nError: Certificate files (cert.pem, key.pem) are missing in './certs/'.")
+                print("These are needed for the local HTTPS server that the tunnel points to.")
+                print("Please use option 5 ('Manage TLS Certificates') to generate them first.")
+                input("Press Enter to return to menu...")
+                continue # Stay in menu
+            # *** Pre-start cloudflared Check ***
+            if not check_cloudflared_availability():
+                 # Instructions are printed inside the check function.
+                 input("Press Enter to return to menu...")
+                 continue # Stay in menu
+            # *** End Checks ***
+            # No need to explicitly save config here, tunnel uses current settings.
+            return 'tunnel' # Signal to main loop to start with tunnel.
+        elif choice == '9': # Exit
+            return None # Signal to main loop to exit.
         else:
             print("Invalid choice. Please try again.")
 
@@ -571,10 +733,10 @@ class QuietHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     """
     Custom HTTP request handler that overrides logging methods
     to write to the dedicated 'https_logger' (file logger).
+    Serves files from a specified directory.
     """
     def __init__(self, *args, directory=None, **kwargs):
         # Python 3.7+ allows specifying the directory directly.
-        # Fallback needed if supporting older Python versions.
         if directory is None:
             directory = os.getcwd() # Default behavior if not specified
         super().__init__(*args, directory=directory, **kwargs)
@@ -590,71 +752,98 @@ class QuietHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
 class ThreadingHTTPServer(ThreadingMixIn, http.server.HTTPServer):
     """HTTPServer that uses threads to handle requests."""
     allow_reuse_address = True # Allow reusing the address quickly after shutdown
-    # disable_request_handler_dns_lookup = True # Removed as it's less common/needed now
 
-def run_https_server(host, port, client_dir):
+def _start_https_server_thread(host, port, client_dir):
     """
-    Target function executed in a separate thread to run the HTTPS server.
-    Sets up SSL, creates the handler with the correct directory, starts the server,
-    and handles cleanup.
+    Internal helper to start the HTTPS server in a separate thread.
 
     Args:
         host (str): The hostname or IP address to bind the server to.
         port (int): The port number to bind the server to.
         client_dir (str): The absolute path to the directory containing client files.
+
+    Returns:
+        threading.Thread | None: The thread object if startup initiated, None on immediate error.
     """
-    global https_server # Reference the global variable to store the server instance.
-    server_started_successfully = False
-    Handler = http.server.partial(QuietHTTPRequestHandler, directory=client_dir) # Bind client_dir to handler
+    global https_server, https_thread # Allow modification of global state
+
+    print("\nStarting HTTPS server thread...")
+    # Use functools.partial to create a handler instance with the directory pre-set.
+    Handler = partial(QuietHTTPRequestHandler, directory=client_dir)
 
     try:
-        # 1. Setup SSL Context
-        print(f"[HTTPS Thread] Setting up SSL context using:\n  Cert: {CERT_FILE}\n  Key:  {KEY_FILE}")
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        # load_cert_chain requires existing, valid files. Menu logic ensures this.
-        context.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
-        print(f"[HTTPS Thread] SSL context loaded.")
-
-        # 2. Create and Start Server (No need to change CWD now)
-        print(f"[HTTPS Thread] Attempting to bind HTTPS server to {host}:{port}...")
-        # Pass the custom handler (with directory bound) to the server.
+        # Create the server instance but don't start serve_forever yet.
+        # This allows checking for binding errors before launching the thread.
         https_server = ThreadingHTTPServer((host, port), Handler)
+
+        # Setup SSL Context (moved before thread start for early error detection)
+        print(f"[HTTPS Setup] Setting up SSL context using:\n  Cert: {CERT_FILE}\n  Key:  {KEY_FILE}")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
+        print(f"[HTTPS Setup] SSL context loaded.")
         # Wrap the server's socket with the SSL context to enable HTTPS.
         https_server.socket = context.wrap_socket(https_server.socket, server_side=True)
-        server_started_successfully = True # Mark server as successfully initialized
+        print(f"[HTTPS Setup] Server socket wrapped with SSL.")
 
-        # Log startup messages (to console and file via logger).
-        startup_msg = f"Serving HTTPS on {host}:{port} from {client_dir}..."
-        print(f"[HTTPS Thread] {startup_msg}")
+        # Now create and start the thread to run the server loop.
+        https_thread = threading.Thread(
+            target=_run_https_server_loop, # Target function is now the loop runner
+            args=(https_server, host, port, client_dir), # Pass the created server instance
+            daemon=True
+        )
+        https_thread.start()
+        print(f"[HTTPS Thread] Thread started. Serving HTTPS on {host}:{port} from {client_dir}")
         https_logger.info(f"HTTPS Server starting on {host}:{port}, serving {client_dir}")
         print(f"[HTTPS Thread] Access client at: https://localhost:{port} or https://127.0.0.1:{port}")
-
-        # 3. Run Server Loop
-        # This call blocks the thread until https_server.shutdown() is called from another thread.
-        https_server.serve_forever()
+        return https_thread
 
     except FileNotFoundError as e:
-        # Should not happen if menu logic is correct, but handle defensively.
-        print(f"\n[HTTPS Thread] ERROR: File not found during server setup (Cert/Key/ClientDir?): {e}")
-        https_logger.error(f"FileNotFoundError during server setup: {e}")
+        print(f"\n[HTTPS Setup] ERROR: File not found during server setup (Cert/Key?): {e}")
+        https_logger.error(f"FileNotFoundError during HTTPS setup: {e}")
+        https_server = None # Ensure server object is None if setup failed
+        return None
     except OSError as e:
-        # Handle OS errors like "Address already in use" or permission errors.
-        print(f"\n[HTTPS Thread] ERROR starting HTTPS server: {e}")
-        https_logger.error(f"OSError starting HTTPS server: {e}")
+        print(f"\n[HTTPS Setup] ERROR binding or setting up HTTPS server: {e}")
+        https_logger.error(f"OSError during HTTPS setup: {e}")
+        https_server = None
+        return None
     except Exception as e:
-        # Catch any other unexpected errors in the thread.
-        print(f"\n[HTTPS Thread] An unexpected error occurred: {e}")
-        https_logger.exception("Unexpected error in HTTPS server thread")
+        print(f"\n[HTTPS Setup] An unexpected error occurred: {e}")
+        https_logger.exception("Unexpected error during HTTPS setup")
+        https_server = None
+        return None
+
+def _run_https_server_loop(server_instance, host, port, client_dir):
+    """
+    Target function executed in the HTTPS server thread. Runs the main server loop.
+    Handles cleanup specific to the thread's execution context.
+
+    Args:
+        server_instance (ThreadingHTTPServer): The pre-configured server instance.
+        host (str): Hostname (for logging).
+        port (int): Port number (for logging).
+        client_dir (str): Client directory path (for logging).
+    """
+    global https_server # Reference global to clear it on exit
+    try:
+        # This call blocks the thread until server_instance.shutdown() is called.
+        server_instance.serve_forever()
+    except Exception as e:
+        # Catch unexpected errors within the serve_forever loop itself.
+        print(f"\n[HTTPS Thread] An unexpected error occurred during serve_forever: {e}")
+        https_logger.exception("Unexpected error in HTTPS serve_forever loop")
     finally:
-        # --- Cleanup ---
-        # This block runs when serve_forever() returns (after shutdown()) or if an exception occurred.
-        if https_server and server_started_successfully:
-            # Ensure the server socket is closed properly if it was successfully created.
-            https_server.server_close()
-        # No need to change CWD back as we didn't change it.
-        print("[HTTPS Thread] Server stopped.")
-        https_logger.info("HTTPS Server stopped.")
-        # Clear the global reference now that the server is stopped.
+        # --- Thread-Specific Cleanup ---
+        # This runs when serve_forever returns (after shutdown()) or if an exception occurred in the loop.
+        if server_instance:
+            try:
+                # Ensure the server socket is closed properly.
+                server_instance.server_close()
+            except Exception as e:
+                 print(f"[HTTPS Thread] Error during server_close(): {e}")
+        print("[HTTPS Thread] Server loop stopped.")
+        https_logger.info("HTTPS Server loop stopped.")
+        # Clear the global reference from within the thread upon stopping.
         https_server = None
 
 # --- WSS Server Logging ---
@@ -668,26 +857,18 @@ def log_wss_output(process):
     """
     print("[WSS Log Thread] Started.")
     try:
-        # Loop as long as the main program hasn't signaled to stop.
-        while not stop_event.is_set():
-            if process.stdout:
-                 # Read one line from the WSS process's standard output.
-                 # Use readline() which blocks until a line is available or EOF.
-                 line = process.stdout.readline()
-                 if line:
-                     # If a line was read, print it to the console, stripping whitespace.
-                     print(f"[WSS] {line.strip()}")
-                 else:
-                     # readline() returns empty string on EOF (process closed stdout).
-                     print("[WSS Log Thread] WSS process stdout reached EOF, exiting logger.")
-                     break # Exit the loop if the process stream has ended.
+        # Use iter and readline to block efficiently until a line is available or EOF.
+        for line in iter(process.stdout.readline, ''):
+            # Check if the stop event was set while waiting for readline.
+            if stop_event.is_set():
+                print("[WSS Log Thread] Stop event detected, exiting.")
+                break
+            # Print the received line, stripping whitespace.
+            print(f"[WSS] {line.strip()}")
 
-            # Check if the process has terminated *after* trying to read or getting EOF.
-            if process.poll() is not None:
-                 print("[WSS Log Thread] WSS process terminated, exiting logger.")
-                 break # Exit the loop if the process has ended.
-
-            # No need for sleep here as readline() blocks.
+        # After the loop (EOF or break), check if the process terminated unexpectedly vs. normal stop.
+        if not stop_event.is_set() and process.poll() is not None:
+             print("[WSS Log Thread] WSS process stdout reached EOF or process terminated.")
 
     except Exception as e:
         # Log errors encountered during reading, but only if we aren't shutting down.
@@ -696,157 +877,277 @@ def log_wss_output(process):
     finally:
         print("[WSS Log Thread] Exiting.")
 
-
-# --- Server Startup and Management ---
-def start_servers(settings):
+def _start_wss_server_process():
     """
-    Starts the HTTPS server in a thread and the WSS server as a subprocess.
-    Manages their logging threads and handles graceful shutdown on Ctrl+C.
-    Assumes certificates have already been verified/generated via the menu.
+    Internal helper to start the WSS server as a subprocess.
 
-    Args:
-        settings (dict): The dictionary containing the current WSS and HTTPS settings.
+    Returns:
+        subprocess.Popen | None: The Popen object for the WSS process if successful, else None.
     """
-    # Make global variables accessible for modification/reference within this function.
-    global wss_process, https_thread, wss_log_thread, https_server, stop_event
+    global wss_process, wss_log_thread # Allow modification of global state
 
-    stop_event.clear() # Ensure the stop event is initially False for this run.
-
-    # Certificate check is now done in the menu before calling this function.
-    # We proceed directly to starting servers.
-
-    # 1. Start HTTPS Server Thread
-    print("\nStarting HTTPS server thread...")
-    https_thread = threading.Thread(
-        target=run_https_server, # Function to run in the thread.
-        args=(settings['https_host'], settings['https_port'], HTTPS_CLIENT_DIR), # Arguments for the function.
-        daemon=True # Set as daemon so it exits if main thread exits unexpectedly.
-    )
-    https_thread.start() # Start the thread execution.
-
-    # Brief pause to allow the HTTPS server thread to initialize and potentially fail early.
-    time.sleep(1.5)
-    # Check if the thread is alive AND the server object was successfully created inside the thread.
-    if not https_thread.is_alive() or https_server is None:
-         print("\nError: HTTPS server thread failed to start properly. Check logs/config/permissions.")
-         # No WSS process to clean up yet.
-         return # Abort starting servers.
-
-    # 2. Start WSS Server Subprocess
     print("Starting WSS server subprocess...")
     wss_script_path = os.path.join(SCRIPT_DIR, 'server', 'main.py')
     try:
-        # Launch server/main.py using the same Python interpreter that's running this script.
+        # Launch server/main.py using the same Python interpreter.
         wss_process = subprocess.Popen(
             [sys.executable, wss_script_path],
             stdout=subprocess.PIPE,         # Capture standard output.
             stderr=subprocess.STDOUT,       # Redirect standard error to standard output.
-            text=True,                      # Decode output as text (UTF-8 by default).
-            encoding='utf-8',               # Be explicit about encoding
-            bufsize=1,                      # Use line buffering for stdout/stderr.
-            # Set working directory to script dir to help server find its config/etc.
-            cwd=SCRIPT_DIR
+            text=True,                      # Decode output as text.
+            encoding='utf-8',               # Explicit encoding.
+            bufsize=1,                      # Line buffering.
+            cwd=SCRIPT_DIR                  # Set working directory.
         )
         print(f"WSS server process started (PID: {wss_process.pid}). Output will follow:")
+
+        # Start the WSS Logging Thread
+        print("Starting WSS logging thread...")
+        wss_log_thread = threading.Thread(target=log_wss_output, args=(wss_process,), daemon=True)
+        wss_log_thread.start()
+        return wss_process
+
     except Exception as e:
         print(f"Error starting WSS server process: {e}")
-        # If WSS fails, we need to shut down the already running HTTPS server.
-        if https_server:
-            print("Shutting down HTTPS server due to WSS startup failure...")
-            https_server.shutdown() # Signal HTTPS server thread to stop
-        if https_thread and https_thread.is_alive():
-            https_thread.join(timeout=5) # Wait for HTTPS thread to finish cleanup.
-        return # Abort.
+        wss_process = None # Ensure process is None if startup failed.
+        return None
 
-    # 3. Start WSS Logging Thread
-    print("Starting WSS logging thread...")
-    wss_log_thread = threading.Thread(target=log_wss_output, args=(wss_process,), daemon=True)
-    wss_log_thread.start() # Start reading and printing WSS output.
+def _start_cloudflared_tunnel(cloudflared_path, https_port):
+    """
+    Internal helper to start the cloudflared tunnel process, capture its URL,
+    and update the client configuration.
 
-    # 4. Wait for termination signal (Ctrl+C) or unexpected server exit
+    Args:
+        cloudflared_path (str): Full path to the cloudflared executable.
+        https_port (int): The local HTTPS port the tunnel should point to.
+
+    Returns:
+        subprocess.Popen | None: The Popen object for the cloudflared process if successful, else None.
+    """
+    global cloudflared_process # Allow modification of global state
+    print(f"\nStarting Cloudflare tunnel for https://localhost:{https_port}...")
+    # Construct the command to run cloudflared.
+    # --url specifies the local service to tunnel.
+    # We capture stdout to get the public URL. Stderr is also captured for errors.
+    command = [cloudflared_path, "tunnel", "--url", f"https://localhost:{https_port}"]
+
+    try:
+        # Start the cloudflared process.
+        cloudflared_process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, # Capture stderr separately
+            text=True,
+            encoding='utf-8',
+            bufsize=1
+        )
+        print(f"Cloudflared process started (PID: {cloudflared_process.pid}). Waiting for URL...")
+
+        # Monitor cloudflared's output to find the public URL.
+        public_https_url = None
+        # Regex to find the trycloudflare.com URL in the output lines.
+        # Looks for lines containing https://...trycloudflare.com
+        url_pattern = re.compile(r"(https://[\w-]+.trycloudflare.com)")
+        timeout_seconds = 30 # Max time to wait for the URL.
+        start_time = time.time()
+
+        # Read output line by line until URL is found or timeout/error occurs.
+        while time.time() - start_time < timeout_seconds:
+            # Check if process died unexpectedly.
+            if cloudflared_process.poll() is not None:
+                 stderr_output = cloudflared_process.stderr.read()
+                 print(f"Error: Cloudflared process terminated unexpectedly (Exit code: {cloudflared_process.returncode}).")
+                 if stderr_output: print(f"Cloudflared STDERR:\n{stderr_output.strip()}")
+                 cloudflared_process = None
+                 return None # Tunnel startup failed.
+
+            # Read the next line of output (non-blocking would be complex, use readline with timeout indirectly).
+            # We rely on the overall loop timeout here.
+            line = cloudflared_process.stdout.readline()
+            if not line:
+                # If readline returns empty string but process is running, wait briefly.
+                time.sleep(0.1)
+                continue
+
+            print(f"[cloudflared] {line.strip()}") # Print cloudflared output for debugging.
+            match = url_pattern.search(line)
+            if match:
+                # URL found!
+                public_https_url = match.group(1)
+                print(f"\n--- Cloudflare Tunnel Active ---")
+                print(f"Public HTTPS URL: {public_https_url}")
+                break # Exit the loop once URL is found.
+        else:
+            # Loop finished without finding URL (timeout).
+            print(f"Error: Timed out waiting for Cloudflare tunnel URL after {timeout_seconds} seconds.")
+            # Attempt to terminate the lingering process.
+            if cloudflared_process.poll() is None:
+                 cloudflared_process.terminate()
+                 try: cloudflared_process.wait(timeout=2)
+                 except subprocess.TimeoutExpired: cloudflared_process.kill()
+            cloudflared_process = None
+            return None # Tunnel startup failed.
+
+        # Derive the public WSS URL from the HTTPS URL.
+        public_wss_url = public_https_url.replace("https://", "wss://")
+        print(f"Public WSS URL:   {public_wss_url}")
+        print(f"------------------------------")
+
+        # Update the client config file with the new WSS URL.
+        if not update_client_config(public_wss_url):
+            # If updating client config fails, we should stop the tunnel.
+            print("Error: Failed to update client configuration. Stopping tunnel.")
+            if cloudflared_process.poll() is None:
+                 cloudflared_process.terminate()
+                 try: cloudflared_process.wait(timeout=2)
+                 except subprocess.TimeoutExpired: cloudflared_process.kill()
+            cloudflared_process = None
+            # Also revert any partial changes if original_client_wss_url was set.
+            revert_client_config()
+            return None # Tunnel startup effectively failed.
+
+        # If URL found and client config updated, return the process object.
+        return cloudflared_process
+
+    except FileNotFoundError:
+        print(f"Error: Could not execute cloudflared at '{cloudflared_path}'.")
+        cloudflared_process = None
+        return None
+    except Exception as e:
+        print(f"An unexpected error occurred starting cloudflared: {e}")
+        # Clean up if process started partially.
+        if cloudflared_process and cloudflared_process.poll() is None:
+            cloudflared_process.terminate()
+            try: cloudflared_process.wait(timeout=2)
+            except subprocess.TimeoutExpired: cloudflared_process.kill()
+        cloudflared_process = None
+        return None
+
+# --- Server Startup and Management ---
+def manage_running_servers(run_mode):
+    """
+    Manages the running servers (WSS, HTTPS, potentially Cloudflared).
+    Waits for termination signal (Ctrl+C) or unexpected server exit.
+    Handles the graceful shutdown sequence for all active components.
+
+    Args:
+        run_mode (str): 'local' or 'tunnel', indicating which mode was started.
+    """
+    # Access global variables holding the process/thread objects.
+    global wss_process, https_thread, wss_log_thread, https_server, cloudflared_process, stop_event
+
     print("\nServers are running. Press Ctrl+C to stop.")
     try:
         # Keep the main thread alive while servers run in background threads/processes.
-        # Periodically check if the servers/threads have died unexpectedly.
         while not stop_event.is_set():
-            wss_exit_code = wss_process.poll() # Check if WSS process ended
-            if wss_exit_code is not None:
-                print(f"\nError: WSS server process terminated unexpectedly (Exit Code: {wss_exit_code}).")
-                https_logger.error(f"WSS server process terminated unexpectedly (Exit Code: {wss_exit_code}).")
-                stop_event.set() # Signal other threads to stop.
+            # Check WSS process status.
+            if wss_process and wss_process.poll() is not None:
+                print(f"\nError: WSS server process terminated unexpectedly (Exit Code: {wss_process.returncode}).")
+                https_logger.error(f"WSS server process terminated unexpectedly (Exit Code: {wss_process.returncode}).")
+                stop_event.set() # Signal other threads/processes to stop.
                 break # Exit wait loop
 
-            # Check HTTPS thread status less frequently, as it's less likely to die silently
-            if not https_thread.is_alive():
-                 # Check if the server object exists; if not, it likely failed during startup in its thread.
+            # Check HTTPS thread status.
+            if https_thread and not https_thread.is_alive():
+                 # Check if the server object still exists; if not, it likely failed during startup.
                  if https_server is not None:
                      print("\nError: HTTPS server thread terminated unexpectedly.")
                      https_logger.error("HTTPS server thread terminated unexpectedly.")
-                     stop_event.set() # Signal other threads to stop.
-                     break # Exit wait loop
+                     stop_event.set()
+                     break
                  else:
                       # Server likely failed during startup within its thread, error already printed.
                       print("\nError: HTTPS server failed during startup (see previous messages).")
                       stop_event.set()
                       break
 
-            time.sleep(0.5) # Sleep briefly to avoid busy-waiting. Check status twice per second.
+            # Check Cloudflared process status (only if running in tunnel mode).
+            if run_mode == 'tunnel' and cloudflared_process and cloudflared_process.poll() is not None:
+                print(f"\nError: Cloudflared process terminated unexpectedly (Exit Code: {cloudflared_process.returncode}).")
+                https_logger.error(f"Cloudflared process terminated unexpectedly (Exit Code: {cloudflared_process.returncode}).")
+                stderr_output = cloudflared_process.stderr.read()
+                if stderr_output: print(f"Cloudflared STDERR:\n{stderr_output.strip()}")
+                stop_event.set()
+                break
+
+            # Sleep briefly to avoid busy-waiting.
+            time.sleep(0.5)
 
     except KeyboardInterrupt:
         # User pressed Ctrl+C.
         print("\nShutdown signal (Ctrl+C) received...")
-        stop_event.set() # Signal threads to stop gracefully.
+        stop_event.set() # Signal threads/processes to stop gracefully.
     except Exception as e:
         # Catch any other unexpected errors in this main wait loop.
         print(f"\nUnexpected error in main wait loop: {e}")
-        stop_event.set() # Signal threads to stop.
+        stop_event.set() # Signal threads/processes to stop.
     finally:
-        # 5. Graceful Shutdown Sequence
+        # --- Graceful Shutdown Sequence ---
         # This block executes after the loop ends (normally or via exception/Ctrl+C).
         print("Initiating server shutdown...")
 
+        # --- Shutdown Cloudflared Process (if applicable) ---
+        if run_mode == 'tunnel' and cloudflared_process and cloudflared_process.poll() is None:
+            print("Terminating Cloudflared process...")
+            try:
+                cloudflared_process.terminate()
+                cloudflared_process.wait(timeout=5)
+                print("Cloudflared process terminated.")
+            except subprocess.TimeoutExpired:
+                print("Cloudflared process did not terminate gracefully, killing.")
+                cloudflared_process.kill()
+                try: cloudflared_process.wait(timeout=2)
+                except Exception: pass
+            except Exception as e:
+                print(f"Error terminating Cloudflared process: {e}")
+            finally:
+                 cloudflared_process = None # Clear global reference
+
+        # --- Revert Client Config (if applicable) ---
+        # This should happen *after* cloudflared is stopped but before script exits.
+        if run_mode == 'tunnel':
+            revert_client_config() # Function handles check if revert is needed
+
         # --- Shutdown HTTPS Server ---
-        # Check if server instance exists (it might be None if startup failed)
-        if https_server:
+        if https_server: # Check if server object exists
             print("Shutting down HTTPS server...")
             try:
                 https_server.shutdown() # Signal the serve_forever loop to stop.
             except Exception as e:
-                print(f"Error during https_server.shutdown(): {e}") # Log potential errors.
+                print(f"Error during https_server.shutdown(): {e}")
         # Wait for the HTTPS server thread to complete its cleanup.
         if https_thread and https_thread.is_alive():
             print("Waiting for HTTPS thread to finish...")
-            https_thread.join(timeout=5) # Wait up to 5 seconds.
+            https_thread.join(timeout=5)
             if https_thread.is_alive():
                 print("Warning: HTTPS thread did not exit gracefully.")
+        https_thread = None # Clear global reference
 
         # --- Shutdown WSS Process ---
-        if wss_process and wss_process.poll() is None: # Check if process exists and is running.
+        if wss_process and wss_process.poll() is None:
             print("Terminating WSS server process...")
             try:
-                # Attempt graceful termination first
-                wss_process.terminate() # Send SIGTERM (allows potential cleanup).
-                # Wait for termination with a timeout
+                wss_process.terminate()
                 wss_process.wait(timeout=5)
                 print("WSS server process terminated.")
             except subprocess.TimeoutExpired:
-                # If terminate didn't work within the timeout, force kill.
-                print("WSS process did not terminate gracefully after 5s, killing.")
-                wss_process.kill() # Send SIGKILL (forceful).
-                try:
-                    wss_process.wait(timeout=2) # Short wait after kill
-                except Exception: pass # Ignore errors during wait after kill
+                print("WSS process did not terminate gracefully, killing.")
+                wss_process.kill()
+                try: wss_process.wait(timeout=2)
+                except Exception: pass
             except Exception as e:
                 print(f"Error terminating WSS process: {e}")
+            finally:
+                 wss_process = None # Clear global reference
 
         # --- Shutdown WSS Logging Thread ---
-        # The stop_event should have signaled the thread to exit its loop.
-        # We wait for it to finish printing any remaining buffered output.
+        # Stop event was set, now wait for thread to finish.
         if wss_log_thread and wss_log_thread.is_alive():
             print("Waiting for WSS logging thread to finish...")
-            wss_log_thread.join(timeout=2) # Wait up to 2 seconds.
+            wss_log_thread.join(timeout=2)
             if wss_log_thread.is_alive():
                  print("Warning: WSS logging thread did not exit.")
+        wss_log_thread = None # Clear global reference
 
         print("Shutdown complete.")
 
@@ -855,23 +1156,78 @@ def main():
     """
     Main function to orchestrate the manager script execution:
     1. Check dependencies ('websockets').
-    2. Read initial configuration (WSS & HTTPS from file, using defaults if needed).
-    3. Run the configuration menu loop (includes certificate management option).
-    4. If the user chooses to start (and certs exist), call start_servers.
+    2. Read initial configuration.
+    3. Run the configuration menu loop.
+    4. Based on menu choice, start servers locally or with tunnel.
+    5. Manage the running servers until shutdown.
     """
     print("--- Starting HeliX Manager ---")
     # Ensure 'websockets' library is available.
     check_or_install_websockets()
-    # Load current WSS and HTTPS settings from file, using defaults where necessary.
+    # Load current WSS and HTTPS settings from file.
     current_settings = read_config()
 
-    # Run the configuration menu. It returns True if servers should start.
-    if config_menu(current_settings):
-        # Start the servers using the (potentially modified) settings.
-        # Certificate check happens within the menu before returning True here.
-        start_servers(current_settings)
+    # Run the configuration menu. It returns 'local', 'tunnel', or None.
+    start_mode = config_menu(current_settings)
+
+    # Reset global process/thread variables before starting.
+    global wss_process, https_thread, wss_log_thread, https_server, cloudflared_process, stop_event, original_client_wss_url
+    wss_process = None
+    https_thread = None
+    wss_log_thread = None
+    https_server = None
+    cloudflared_process = None
+    original_client_wss_url = None
+    stop_event.clear() # Ensure stop event is clear before starting
+
+    # --- Start Servers Based on Mode ---
+    servers_started_ok = False
+    if start_mode == 'local' or start_mode == 'tunnel':
+        # Start local servers (required for both modes)
+        print("Starting local servers...")
+        https_thread = _start_https_server_thread(
+            current_settings['https_host'], current_settings['https_port'], HTTPS_CLIENT_DIR
+        )
+        # Allow HTTPS server to bind before starting WSS
+        time.sleep(1.0)
+        if https_thread and https_thread.is_alive():
+            wss_process = _start_wss_server_process()
+            if wss_process:
+                # Local servers seem okay so far.
+                if start_mode == 'local':
+                    servers_started_ok = True # Ready for local mode management.
+                elif start_mode == 'tunnel':
+                    # Attempt to start the tunnel.
+                    cloudflared_exe_path = check_cloudflared_availability() # Re-check just in case.
+                    if cloudflared_exe_path:
+                        cloudflared_process = _start_cloudflared_tunnel(
+                            cloudflared_exe_path, current_settings['https_port']
+                        )
+                        if cloudflared_process:
+                            servers_started_ok = True # Tunnel mode ready for management.
+                        else:
+                            print("Failed to start Cloudflare tunnel. Shutting down local servers.")
+                    else:
+                         print("Cloudflared became unavailable after menu selection? Shutting down.")
+
+            else: # WSS failed
+                 print("Failed to start WSS server process. Shutting down HTTPS server.")
+        else: # HTTPS failed
+             print("Failed to start HTTPS server thread.")
+
+        # If anything failed during startup, trigger immediate shutdown.
+        if not servers_started_ok:
+             stop_event.set() # Signal any potentially running components (like HTTPS thread) to stop.
+             manage_running_servers(start_mode) # Call manager to handle cleanup.
+             print("Exiting due to server startup failure.")
+             sys.exit(1)
+
+    # --- Manage Running Servers ---
+    if servers_started_ok:
+        # If startup was successful, enter the main management loop.
+        manage_running_servers(start_mode)
     else:
-        # User chose to exit from the menu.
+        # User chose to exit from the menu or startup failed before entering management loop.
         print("Exiting HeliX Manager.")
 
 # Standard Python idiom: Run the main function only when the script is executed directly.
