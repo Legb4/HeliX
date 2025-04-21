@@ -91,7 +91,7 @@ HeliX uses simple, temporary identifiers chosen by the user upon connecting.
 
 Before setting up HeliX, ensure you have the following:
 
-*   **Operating System:** Windows, macOS, or Linux (tested primarily on Linux, should work on others).
+*   **Operating System:** Windows, macOS, or Linux (tested primarily on Linux and Windows, but it should work on others).
 *   **Python:** Python 3.7 or newer recommended. Download from [python.org](https://www.python.org/downloads/). Ensure Python and Pip are added to your system's PATH during installation.
 *   **Pip:** Python's package installer, usually included with Python 3.4+.
 *   **`mkcert` Utility:** A tool for creating locally-trusted development certificates.
@@ -105,7 +105,7 @@ Before setting up HeliX, ensure you have the following:
 1.  **Get the Code:**
     *   **Option A (Git):** Clone the repository:
         ```bash
-        git clone <repository_url> # Replace <repository_url> with the actual URL
+        git clone https://github.com/DDeal/HeliX.git
         cd helix
         ```
     *   **Option B (Download):** Download the project ZIP file and extract it. Navigate into the extracted `helix` directory in your terminal.
@@ -203,7 +203,7 @@ Before setting up HeliX, ensure you have the following:
 
 ## Usage Guide
 
-1.  **Access Client:** Open the correct `https://...` URL in your browser (see "Running HeliX"). Bypass any certificate warnings if necessary for local use.
+1.  **Access Client:** Open the correct `https://...` URL in your browser (see "Running HeliX").
 2.  **Registration:** You'll see the registration screen.
     *   Choose a unique temporary identifier (e.g., `Alice_Work`, `Bob_Secure`).
     *   Click "Register". The status bar at the bottom should update.
