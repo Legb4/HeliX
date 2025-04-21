@@ -257,7 +257,7 @@ Before setting up HeliX, ensure you have the following:
 
 MIT License
 
-Copyright (c) 2025 DigitalMafia / Project Name
+Copyright (c) 2025 DigitalMafia / HeliX E2EE Chat
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
