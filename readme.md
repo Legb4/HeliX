@@ -1,5 +1,18 @@
 # HeliX Chat
 
+**Table of Contents**
+
+*   [Introduction / Overview](#introduction--overview)
+*   [How HeliX Works & Security](#how-helix-works--security)
+*   [Prerequisites](#prerequisites)
+*   [Installation & Setup](#installation--setup)
+*   [Running HeliX](#running-helix)
+*   [Usage Guide](#usage-guide)
+*   [Troubleshooting](#troubleshooting)
+*   [License](#license)
+
+---
+
 ## Introduction / Overview
 
 **What is HeliX?**
@@ -146,7 +159,6 @@ Before setting up HeliX, ensure you have the following:
         ├── main.py            # Entry point for the WSS server process
         ├── requirements.txt   # Lists Python dependencies (currently just 'websockets')
         └── server.py          # Core WSS server logic (connection handling, message relay)
-    ```
 
 3.  **Run the Manager Script (Initial Run):**
     *   Open your terminal or command prompt, navigate to the `helix` directory.
