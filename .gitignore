@@ -1,0 +1,18 @@
+# Python bytecode cache
+# Ignore all directories named __pycache__ and their contents, wherever they appear.
+__pycache__/
+
+# Generated TLS Certificates and Backups in the certs directory
+# Ignore all files ending in .pem within the certs/ directory.
+certs/*.pem
+# Also ignore the backup files created by the manager script.
+certs/*_old.pem
+
+# Ignore log files within the logs directory (if you don't want logs committed)
+logs/*.log
+
+# Optional: Common virtual environment folders (if you use one)
+# venv/
+# env/
+# *.venv
+# .env
