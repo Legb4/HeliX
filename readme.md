@@ -131,10 +131,6 @@ Before setting up HeliX, ensure you have the following:
     ├── readme.md              # This file
     │
     ├── certs/                 # Directory for TLS certificates
-    │   ├── cert.pem           # (Generated) SSL certificate file
-    │   ├── key.pem            # (Generated) SSL private key file
-    │   ├── cert_old.pem       # (Generated) Backup of previous certificate
-    │   ├── key_old.pem        # (Generated) Backup of previous key
     │   └── mkcert.exe         # (Windows Only, Optional) Place downloaded mkcert here if not in PATH
     │
     ├── client/                # Contains all client-side browser code
@@ -150,17 +146,12 @@ Before setting up HeliX, ensure you have the following:
     │       ├── UIController.js    # Handles updates to the HTML user interface
     │       └── WebSocketClient.js # Manages the WebSocket connection and message handling
     │
-    ├── logs/                  # Directory for log files
-    │   └── https_server.log   # (Generated) Log file for the HTTPS server activity
-    │
     └── server/                # Contains all server-side Python code
         ├── config.py          # Server configuration (WSS/HTTPS Host/Port)
         ├── main.py            # Entry point for the WSS server process
         ├── requirements.txt   # Lists Python dependencies (currently just 'websockets')
-        ├── server.py          # Core WSS server logic (connection handling, message relay)
-        └── __pycache__/       # (Generated, Ignored) Python bytecode cache directory
+        └── server.py          # Core WSS server logic (connection handling, message relay)
     ```
-    *(Note: Files/directories marked as "(Generated)" or "(Optional)" might not exist initially or are created by running the manager/servers. `__pycache__` and `.pem` files are ignored by default via `.gitignore`.)*
 
 3.  **Run the Manager Script (Initial Run):**
     *   Open your terminal or command prompt, navigate to the `helix` directory.
