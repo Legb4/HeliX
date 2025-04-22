@@ -21,7 +21,8 @@ HeliX is a browser-based, end-to-end encrypted (E2EE), ephemeral chat system. It
 
 **Core Features:**
 
-*   **End-to-End Encryption:** Messages are encrypted in your browser and can only be decrypted by the intended recipient. The server cannot read your messages. Uses Web Crypto API (RSA-OAEP for key exchange, AES-GCM for messages).
+*   **End-to-End Encryption:** Messages are encrypted in your browser and can only be decrypted by the intended recipient. The server cannot read your messages. Uses Web Crypto API (ECDH P-256 for key agreement, HKDF for key derivation, AES-GCM for messages).
+*   **Perfect Forward Secrecy (PFS):** Uses ephemeral ECDH keys for each session, ensuring that even if long-term keys were compromised (though HeliX doesn't use long-term keys), past session messages cannot be decrypted.
 *   **Ephemeral:** Chat messages exist only in the browser's memory during an active session. They are lost when the session ends, the browser tab is closed, or the server restarts. No message history is stored on the server or persistently on the client.
 *   **Serverless Message Storage:** The Python server only relays data; it does not store message content.
 *   **Simple Identifier System:** Users register with a temporary, unique ID for the duration of their connection to the server. IDs must be shared out-of-band.
@@ -34,7 +35,7 @@ HeliX is ideal for situations where you need a quick, secure way to chat with so
 
 **Disclaimer:**
 
-HeliX is currently experimental software. While it implements strong E2EE principles, it has not undergone a formal security audit. Use it at your own risk. The security of your communication depends heavily on the correct setup, the security of the devices used, the secure exchange of user identifiers, and trusting the `mkcert` local Certificate Authority if you install it.
+HeliX is currently experimental software. While it implements strong E2EE principles including PFS, it has not undergone a formal security audit. Use it at your own risk. The security of your communication depends heavily on the correct setup, the security of the devices used, the secure exchange of user identifiers, and trusting the `mkcert` local Certificate Authority if you install it.
 
 ---
 
@@ -44,37 +45,40 @@ HeliX is currently experimental software. While it implements strong E2EE princi
 
 1.  **Client:** Runs entirely in the user's web browser using HTML, CSS, and JavaScript. It handles:
     *   User Interface (UI) interactions.
-    *   Generating cryptographic keys (RSA and AES) via the browser's Web Crypto API.
-    *   Encrypting and decrypting messages.
+    *   Generating ephemeral cryptographic keys (ECDH and AES) via the browser's Web Crypto API.
+    *   Performing key agreement (ECDH) and key derivation (HKDF).
+    *   Encrypting and decrypting messages using the derived session key.
     *   Communicating with the WSS server via Secure WebSockets.
 2.  **HTTPS Server:** A simple Python server (integrated into `helix_manager.py`) serves the static client files (HTML, CSS, JS) to the browser over HTTPS. This is **required** for the Web Crypto API to function securely.
 3.  **WSS Server:** A Python server using the `websockets` library. It acts as a signaling and relay server:
     *   Manages user registrations (mapping temporary IDs to connections).
-    *   Relays handshake messages (key exchange, challenges) between clients.
+    *   Relays handshake messages (public keys, challenges) between clients.
     *   Relays the **encrypted** chat messages between connected peers.
-    *   **Crucially, the WSS server never sees the plaintext message content.**
+    *   Tracks active session pairings solely for notifying users of peer disconnections.
+    *   **Crucially, the WSS server never sees the plaintext message content or the derived session keys.**
 
-**End-to-End Encryption (E2EE):**
+**End-to-End Encryption (E2EE) with Perfect Forward Secrecy (PFS):**
 
-HeliX ensures that only the sender and the intended recipient can read messages. This is achieved through:
+HeliX ensures that only the sender and the intended recipient can read messages, and that past sessions remain secure even if future keys were somehow compromised. This is achieved through:
 
-1.  **Session Handshake:** When User A wants to chat with User B:
-    *   They exchange temporary RSA public keys.
-    *   They perform a challenge-response verification to ensure they are talking to the holder of the corresponding private key and not an imposter.
+1.  **Session Handshake & Key Agreement:** When User A wants to chat with User B:
+    *   Each user generates a new, temporary (ephemeral) ECDH key pair (using the P-256 curve).
+    *   They exchange their public ECDH keys via the relay server.
+    *   Each user independently computes the same shared secret using their own private ECDH key and the peer's public ECDH key. This secret is never transmitted directly.
+    *   Both users process the raw shared secret through a Key Derivation Function (HKDF with SHA-256) to derive a strong, shared 256-bit AES-GCM symmetric session key.
+    *   They perform a challenge-response verification: one user encrypts known challenge data using the *derived AES session key*, and the other must decrypt it and encrypt it back. This confirms both parties successfully derived the same session key from the exchanged public keys, authenticating the key agreement process.
 2.  **Message Encryption:** For each message sent during an active session:
-    *   A new, random AES-GCM symmetric key is generated by the sender.
-    *   The message text is encrypted using this AES key and a unique Initialization Vector (IV). AES-GCM provides both confidentiality and authenticity.
-    *   The AES key itself is encrypted using the recipient's RSA public key (obtained during the handshake).
-    *   The encrypted AES key, the IV, and the AES-encrypted message data are sent to the WSS server.
-3.  **Server Relay:** The WSS server receives this bundle and relays it to the recipient *without* being able to decrypt any part of it (as it doesn't have the recipient's private RSA key).
+    *   The message text is encrypted using the *single derived AES-GCM session key* and a unique Initialization Vector (IV). AES-GCM provides both confidentiality and authenticity.
+    *   The IV and the AES-encrypted message data are sent to the WSS server. (The derived key itself is never sent).
+3.  **Server Relay:** The WSS server receives the IV and encrypted data bundle and relays it to the recipient *without* being able to decrypt any part of it (as it doesn't have the derived session key).
 4.  **Message Decryption:** The recipient's client:
-    *   Decrypts the AES key using their own private RSA key.
-    *   Uses the decrypted AES key and the received IV to decrypt the actual message data.
+    *   Uses the derived AES-GCM session key (which they already computed during the handshake) and the received IV to decrypt the actual message data.
 
 **Ephemeral Nature:**
 
 *   Messages are not stored on the server disk or database.
 *   Messages are not stored persistently in the browser (e.g., in `localStorage`). They only reside in active JavaScript memory.
+*   Ephemeral ECDH keys are generated per session and discarded. The derived AES key exists only for the session duration.
 *   Closing the browser tab, ending the session via the "Disconnect" button, or stopping the WSS server will cause the messages and session keys to be lost.
 
 **HTTPS Importance:**
@@ -87,18 +91,18 @@ HeliX uses simple, temporary identifiers chosen by the user upon connecting.
 
 *   These IDs are only valid while the user is connected to the WSS server.
 *   IDs must be unique on the server at any given time.
-*   **Crucially, you must share your ID with the person you want to chat with through a separate, secure channel** (e.g., phone call, Signal message, in person). HeliX does not provide a discovery mechanism.
+*   **Crucially, you must share your ID with the person you want to chat with through a separate channel** (e.g., phone call, text message, in person, etc). HeliX does not provide a discovery mechanism.
 
 **Security Considerations & Assumptions:**
 
 *   **Server Trust:** You must trust the machine running the WSS and HTTPS servers. While the server cannot read messages, a compromised server could potentially interfere with connections or attempt more advanced attacks (though TLS and E2EE mitigate many risks).
 *   **Client Trust:** Communication is only as secure as the endpoint devices. If a user's computer or browser is compromised, the E2EE can be bypassed locally.
-*   **`mkcert` CA Trust:** For browsers to accept the HTTPS connection without warnings, the `mkcert` local Certificate Authority (CA) must be installed and trusted by your operating system/browser. The manager script offers to run `mkcert -install`, but this requires user confirmation and potentially administrator privileges. Accessing the client via an IP address or hostname not listed in the certificate (`localhost`, `127.0.0.1`) *will* result in browser warnings, even if the CA is installed.
+*   **`mkcert` CA Trust:** For browsers to accept the HTTPS connection without warnings, the `mkcert` local Certificate Authority (CA) must be installed and trusted by your operating system/browser. The manager script offers to run `mkcert -install`, but this requires user confirmation and potentially administrator privileges. Accessing the client via an IP address or hostname not listed in the certificate (`localhost`, `127.0.0.1`) *will* result in browser warnings, even if the CA is installed. Trusting this CA is a security consideration.
 *   **Identifier Exchange:** The security of initiating a conversation depends on how securely you exchange identifiers with your peer.
-*   **No Perfect Forward Secrecy (PFS):** The current implementation uses RSA for key exchange. While secure, if an attacker were to record all traffic *and* later compromise a user's long-term private RSA key (which HeliX doesn't currently use, as keys are session-based), they could potentially decrypt past messages. Protocols like Signal use algorithms (e.g., variations of Diffie-Hellman) to provide PFS, which is a potential future enhancement for HeliX.
 *   **Metadata Protection:** The server knows *who* is registered (`identifier` -> `connection`) and relays messages between peers based on `targetId`.
-    *   **NEW (Disconnect Notifications):** To provide timely notifications when a chat partner disconnects, the server now temporarily tracks active session pairings (e.g., `Alice123` <-> `Bob456`). This pairing information exists only while the session is considered active by the server and is deleted when a user disconnects or explicitly ends the session (sends Type 9).
+    *   **Disconnect Notifications:** To provide timely notifications when a chat partner disconnects, the server temporarily tracks active session pairings (e.g., `Alice123` <-> `Bob456`). This pairing information exists only while the session is considered active by the server and is deleted when a user disconnects or explicitly ends the session.
     *   **Implication:** This increases the *metadata* stored on the server. If the server is compromised, an attacker could gain a clearer real-time view of *who is actively chatting with whom*. This **does not** compromise the end-to-end encryption of the message *content*, which remains unreadable by the server.
+*   **Perfect Forward Secrecy:** HeliX implements PFS using ephemeral ECDH keys for each session. This means that even if an attacker could somehow compromise keys used in one session, they could not use that information to decrypt messages from *past* sessions.
 
 ---
 
@@ -229,13 +233,13 @@ Before setting up HeliX, ensure you have the following:
 *(This section remains the same as it describes the client-side interaction)*
 
 1.  **Access Client:** Open the correct `https://...` URL in your browser (see "Running HeliX").
-2.  **Registration:** Choose a unique temporary ID and click "Register".
+2.  **Registration:** Choose a unique temporary ID (3-30 chars, letters, numbers, -, \_) and click "Register".
 3.  **Main Interface:** Familiarize yourself with the Sidebar, Main Content area, and Status Bar.
 4.  **Share Your ID:** Securely communicate your registered ID to your peer out-of-band.
 5.  **Starting a Chat:** Enter peer's ID in the sidebar, click "Start Chat".
 6.  **Receiving a Chat Request:** Accept or Deny the prompt in the main content area or by clicking the session in the sidebar.
 7.  **Active Chatting:** Type messages in the chat view.
-8.  **Ending a Session:** Click "Disconnect" in the chat header.
+8.  **Ending a Session:** Click "Disconnect" in the chat header. Your peer will be notified.
 9.  **Switching Between Sessions:** Click peer IDs in the sidebar.
 10. **Understanding Info Panes:** Read messages about errors, denials, or timeouts.
 
@@ -256,9 +260,11 @@ Before setting up HeliX, ensure you have the following:
     *   Check OS firewall rules on server.
     *   If using LAN IP, ensure it's correct.
 *   **Cannot Connect from Outside LAN:** Verify firewall rules *and* router port forwarding. See "Installation & Setup" section 7.
-*   **Registration Failed ("Identifier already taken"):** Choose a different temporary ID.
-*   **Chat Request Failed ("User not found or disconnected"):** Verify peer's ID and ensure they are online and registered.
+*   **Registration Failed ("Identifier already taken" or "Invalid identifier format"):** Choose a different temporary ID matching the required format (3-30 chars, letters, numbers, -, \_).
+*   **Chat Request Failed ("User '...' is unavailable."):** Verify peer's ID and ensure they are online and registered. The peer might have disconnected.
 *   **Port Conflict ("Address already in use"):** Stop the other application or configure HeliX to use different ports via the manager menu (Options 1-4).
+*   **Handshake Timeout:** If the connection hangs during initiation, check console logs on both clients and the server for errors. Network latency or firewall issues could interfere.
+*   **Disconnected by Server (Rate Limit):** If you see an alert about being disconnected for exceeding the rate limit, you sent too many messages too quickly. Wait a moment and reconnect.
 
 ---
 

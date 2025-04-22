@@ -1,7 +1,7 @@
 # server/server.py
 # This file contains the core logic for the HeliX WebSocket server,
 # including client registration, message relaying, connection handling, SSL setup,
-# rate limiting, message validation, identifier sanitization,
+# rate limiting, message validation (updated for PFS payloads), identifier sanitization,
 # and active session tracking for disconnect notifications.
 
 import asyncio          # For asynchronous operations (coroutines, event loop).
@@ -284,23 +284,66 @@ async def connection_handler(websocket):
                         error_msg = "Invalid identifier format. Must be 3-30 characters, start with a letter/number, and contain only letters, numbers, underscores, or hyphens."
                         await send_json(websocket, 0.2, {"identifier": identifier, "error": error_msg})
                         validation_passed = False # Ensure we still skip further processing
-                elif message_type in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]: # Relayable message types
-                    # Check targetId
+
+                # --- PFS Payload Validation ---
+                elif message_type in [1, 3, 7, 9, 10, 11]: # Types with simple target/sender payload
                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
                         logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
-                    # Check senderId consistency if client is registered
-                    elif sender_id:
+                    elif sender_id: # Check sender consistency only if registered
                         payload_sender_id = payload.get("senderId")
                         if not payload_sender_id or payload_sender_id != sender_id:
                              logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
                              validation_passed = False
-                    # Additional checks for Type 8 (Encrypted Message)
-                    elif message_type == 8:
-                        if not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['encryptedKey', 'iv', 'data']):
-                            logging.warning(f"Missing or invalid fields in Type 8 payload from {websocket.remote_address}. Ignoring: {payload}")
-                            validation_passed = False
-                # Add checks for other types if they have specific payload requirements
+                elif message_type in [2, 4]: # Types carrying a public key
+                    if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                    elif not payload.get("publicKey") or not isinstance(payload.get("publicKey"), str):
+                        logging.warning(f"Missing or invalid 'publicKey' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                    elif sender_id: # Check sender consistency only if registered
+                        payload_sender_id = payload.get("senderId")
+                        if not payload_sender_id or payload_sender_id != sender_id:
+                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
+                             validation_passed = False
+                elif message_type == 5: # Challenge
+                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                     elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'encryptedChallenge']):
+                        logging.warning(f"Missing or invalid fields in Type 5 payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                     elif sender_id: # Check sender consistency only if registered
+                        payload_sender_id = payload.get("senderId")
+                        if not payload_sender_id or payload_sender_id != sender_id:
+                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
+                             validation_passed = False
+                elif message_type == 6: # Challenge Response
+                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                     elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'encryptedResponse']):
+                        logging.warning(f"Missing or invalid fields in Type 6 payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                     elif sender_id: # Check sender consistency only if registered
+                        payload_sender_id = payload.get("senderId")
+                        if not payload_sender_id or payload_sender_id != sender_id:
+                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
+                             validation_passed = False
+                elif message_type == 8: # Encrypted Message
+                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                     elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'data']): # Check for 'data', not 'encryptedKey'
+                        logging.warning(f"Missing or invalid fields in Type 8 payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                     elif sender_id: # Check sender consistency only if registered
+                        payload_sender_id = payload.get("senderId")
+                        if not payload_sender_id or payload_sender_id != sender_id:
+                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
+                             validation_passed = False
+                # --- End PFS Payload Validation ---
 
                 if not validation_passed:
                     continue # Skip processing this invalid message
@@ -346,11 +389,9 @@ async def connection_handler(websocket):
                         except websockets.exceptions.ConnectionClosed:
                             # Handle the case where the target client disconnected *during* the send attempt.
                             logging.warning(f"Relay failed: Target user '{target_id}' connection closed during send attempt.")
-                            # --- BEGIN Standardized Error ---
-                            # Send an error message (Type -1) back to the original sender.
+                            # Send standardized error message (Type -1) back to the original sender.
                             error_payload = {"targetId": target_id, "message": f"User '{target_id}' is unavailable."} # Standardized message
                             await send_json(websocket, -1, error_payload)
-                            # --- END Standardized Error ---
                         except Exception as e:
                              # Catch any other unexpected errors during the relay send.
                              logging.exception(f"Unexpected error relaying message to {target_id}")
@@ -358,11 +399,9 @@ async def connection_handler(websocket):
                     else:
                         # Target client ID not found in the CLIENTS registry (not online or never registered).
                         logging.warning(f"Target user '{target_id}' not found. Sending error back to '{sender_id}'.")
-                        # --- BEGIN Standardized Error ---
-                        # Send an error message (Type -1) back to the original sender.
+                        # Send standardized error message (Type -1) back to the original sender.
                         error_payload = {"targetId": target_id, "message": f"User '{target_id}' is unavailable."} # Standardized message
                         await send_json(websocket, -1, error_payload)
-                        # --- END Standardized Error ---
                 else:
                     # Received a non-registration message from a client that hasn't registered yet.
                     logging.warning(f"Received non-registration message type {message_type} from unregistered client {websocket.remote_address}. Ignoring.")

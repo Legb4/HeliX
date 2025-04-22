@@ -5,6 +5,7 @@
  * and all active/pending chat sessions. It acts as the central coordinator,
  * interacting with the WebSocketClient for network communication, the UIController
  * for display updates, and creating/managing individual Session instances.
+ * This version uses ECDH for Perfect Forward Secrecy.
  */
 class SessionManager {
     /**
@@ -37,22 +38,21 @@ class SessionManager {
         this.STATE_FAILED_REGISTRATION = 'FAILED_REGISTRATION'; // Registration attempt failed.
         this.STATE_DISCONNECTED = 'DISCONNECTED'; // WebSocket connection lost or closed.
 
-        // --- Session-Specific States ---
-        // Define possible states for individual Session instances. These track the handshake and active chat phases.
+        // --- Session-Specific States (Reflecting ECDH Flow) ---
+        // Define possible states for individual Session instances.
         // Initiator states:
-        this.STATE_INITIATING_SESSION = 'INITIATING_SESSION'; // Sent Type 1 request, awaiting Type 2 (Accept) or 3 (Deny).
-        this.STATE_AWAITING_PEER_KEY = 'AWAITING_PEER_KEY'; // Received Type 2 (Accept), sent Type 4 (Own Key), awaiting Type 5 (Challenge).
-        this.STATE_AWAITING_CHALLENGE_RESPONSE = 'AWAITING_CHALLENGE_RESPONSE'; // Received Type 4 (Peer Key), sent Type 5 (Challenge), awaiting Type 6 (Response).
-        this.STATE_AWAITING_FINAL_CONFIRMATION = 'AWAITING_FINAL_CONFIRMATION'; // Received Type 6 (Response), sent Type 7 (Established), awaiting final implicit confirmation (or message).
+        this.STATE_INITIATING_SESSION = 'INITIATING_SESSION'; // Sent Type 1 request, awaiting Type 2 (Accept + Peer ECDH Key).
+        this.STATE_AWAITING_PEER_KEY = 'AWAITING_PEER_KEY'; // Received Type 2, sent Type 4 (Own ECDH Key), awaiting Type 5 (Challenge).
+        this.STATE_AWAITING_CHALLENGE_RESPONSE = 'AWAITING_CHALLENGE_RESPONSE'; // Received Type 5 (Challenge), sent Type 6 (Response), awaiting Type 7 (Established).
         // Responder states:
         this.STATE_REQUEST_RECEIVED = 'REQUEST_RECEIVED'; // Received Type 1 request, awaiting user Accept/Deny.
-        this.STATE_GENERATING_ACCEPT_KEYS = 'GENERATING_ACCEPT_KEYS'; // User clicked Accept, generating keys before sending Type 2.
-        this.STATE_AWAITING_CHALLENGE = 'AWAITING_CHALLENGE'; // Sent Type 2 (Accept), awaiting Type 4 (Initiator Key).
-        this.STATE_RECEIVED_INITIATOR_KEY = 'RECEIVED_INITIATOR_KEY'; // Received Type 4 (Initiator Key), awaiting Type 5 (Challenge).
-        this.STATE_RECEIVED_CHALLENGE = 'RECEIVED_CHALLENGE'; // Received Type 5 (Challenge), sent Type 6 (Response), awaiting Type 7 (Established).
+        this.STATE_GENERATING_ACCEPT_KEYS = 'GENERATING_ACCEPT_KEYS'; // User clicked Accept, generating ECDH keys before sending Type 2.
+        this.STATE_AWAITING_CHALLENGE = 'AWAITING_CHALLENGE'; // Sent Type 2 (Accept + Own ECDH Key), awaiting Type 4 (Initiator ECDH Key).
+        this.STATE_RECEIVED_INITIATOR_KEY = 'RECEIVED_INITIATOR_KEY'; // Received Type 4, derived key, awaiting Type 5 (Challenge).
+        this.STATE_RECEIVED_CHALLENGE = 'RECEIVED_CHALLENGE'; // Received Type 5, sent Type 6 (Response), awaiting Type 7 (Established).
         // Common states:
-        this.STATE_RECEIVED_PEER_KEY = 'RECEIVED_PEER_KEY'; // (Initiator) Received peer's key (Type 2 payload).
-        this.STATE_HANDSHAKE_COMPLETE = 'HANDSHAKE_COMPLETE'; // (Initiator) Challenge verified (Type 6 payload).
+        // Note: Some previous states like RECEIVED_PEER_KEY are implicitly covered by the ECDH flow states.
+        this.STATE_HANDSHAKE_COMPLETE = 'HANDSHAKE_COMPLETE'; // Challenge verified (Type 6 received/sent). Ready for final confirmation.
         this.STATE_ACTIVE_SESSION = 'ACTIVE_SESSION'; // Handshake complete (Type 7 received/sent), ready for messages (Type 8).
         // End/Error states:
         this.STATE_DENIED = 'DENIED'; // Request explicitly denied (Type 3) or target not found (Type -1).
@@ -75,14 +75,14 @@ class SessionManager {
         // Stores the ID of the registration timeout timer.
         this.registrationTimeoutId = null;
 
-        // --- NEW: Local Typing State Tracking ---
+        // --- Local Typing State Tracking ---
         // Tracks if the local user is currently considered "typing" to a specific peer.
         this.isTypingToPeer = new Map(); // Map<peerId, boolean>
         // Stores timeout IDs for sending TYPING_STOP messages after inactivity.
         this.typingStopTimeoutId = new Map(); // Map<peerId, timeoutId>
         // --------------------------------------
 
-        console.log('SessionManager initialized.');
+        console.log('SessionManager initialized (ECDH Mode).');
         this.updateManagerState(this.STATE_INITIALIZING); // Set initial state.
     }
 
@@ -101,7 +101,7 @@ class SessionManager {
         this.managerState = newState;
     }
 
-    // --- Timeout Handling ---
+    // --- Timeout Handling (No changes needed for PFS) ---
 
     /**
      * Starts a timeout for handshake steps within a specific session.
@@ -136,12 +136,14 @@ class SessionManager {
     handleHandshakeTimeout(peerId) {
         console.error(`Session [${peerId}] Handshake timed out!`);
         const session = this.sessions.get(peerId);
-        // Define the states during which a handshake timeout is relevant.
+        // Define the states during which a handshake timeout is relevant (adjust for ECDH flow)
         const handshakeStates = [
-            this.STATE_AWAITING_PEER_KEY, this.STATE_RECEIVED_PEER_KEY,
-            this.STATE_AWAITING_CHALLENGE, this.STATE_RECEIVED_INITIATOR_KEY,
-            this.STATE_AWAITING_CHALLENGE_RESPONSE, this.STATE_RECEIVED_CHALLENGE,
-            this.STATE_AWAITING_FINAL_CONFIRMATION, this.STATE_HANDSHAKE_COMPLETE
+            this.STATE_AWAITING_PEER_KEY, // Initiator waiting for Type 5
+            this.STATE_AWAITING_CHALLENGE, // Responder waiting for Type 4
+            this.STATE_RECEIVED_INITIATOR_KEY, // Responder waiting for Type 5
+            this.STATE_AWAITING_CHALLENGE_RESPONSE, // Initiator waiting for Type 7
+            this.STATE_RECEIVED_CHALLENGE, // Responder waiting for Type 7
+            this.STATE_HANDSHAKE_COMPLETE // Technically handshake done, but waiting for final confirmation
         ];
         // Check if the session exists and is still in a relevant handshake state.
         if (session && handshakeStates.includes(session.state)) {
@@ -358,7 +360,7 @@ class SessionManager {
 
     /**
      * Initiates a new chat session with a target peer.
-     * Creates a new Session instance, generates RSA keys, and sends a Type 1 request.
+     * Creates a new Session instance, generates ECDH keys, and sends a Type 1 request.
      * @param {string} targetId - The identifier of the peer to connect with.
      */
     async initiateSession(targetId) {
@@ -413,12 +415,13 @@ class SessionManager {
         this.switchToSessionView(targetId);
 
         try {
-            // 6. Generate RSA keys for this session.
-            const keysGenerated = await newSession.cryptoModule.generateAsymmetricKeys();
+            // 6. Generate ECDH keys for this session.
+            const keysGenerated = await newSession.cryptoModule.generateECDHKeys(); // Use ECDH
             if (!keysGenerated) { throw new Error("Key generation failed"); }
-            console.log(`Keys generated for session with ${targetId}.`);
+            console.log(`ECDH keys generated for session with ${targetId}.`);
 
             // 7. Construct and send the SESSION_REQUEST (Type 1) message.
+            // Payload remains the same for Type 1.
             const msg = { type: 1, payload: { targetId: targetId, senderId: this.identifier } };
             console.log("Sending SESSION_REQUEST (Type 1):", msg);
             if (this.wsClient.sendMessage(msg)) {
@@ -440,7 +443,7 @@ class SessionManager {
 
     /**
      * Accepts an incoming session request from a peer.
-     * Generates RSA keys, sends a Type 2 acceptance message with the public key.
+     * Generates ECDH keys, sends a Type 2 acceptance message with the public ECDH key.
      * @param {string} peerId - The identifier of the peer whose request is being accepted.
      */
     async acceptRequest(peerId) {
@@ -465,19 +468,19 @@ class SessionManager {
         this.switchToSessionView(peerId);
 
         try {
-            // 1. Generate RSA keys for this session.
-            const keysGenerated = await session.cryptoModule.generateAsymmetricKeys();
+            // 1. Generate ECDH keys for this session.
+            const keysGenerated = await session.cryptoModule.generateECDHKeys(); // Use ECDH
             if (!keysGenerated) { throw new Error("Key generation failed"); }
-            // 2. Export the generated public key to Base64.
+            // 2. Export the generated public ECDH key to Base64 SPKI format.
             const publicKeyBase64 = await session.cryptoModule.getPublicKeyBase64();
             if (!publicKeyBase64) { throw new Error("Key export failed"); }
 
-            // 3. Construct and send the SESSION_ACCEPT (Type 2) message.
+            // 3. Construct and send the SESSION_ACCEPT (Type 2) message with the ECDH public key.
             const msg = { type: 2, payload: { targetId: peerId, senderId: this.identifier, publicKey: publicKeyBase64 } };
-            console.log("Sending SESSION_ACCEPT (Type 2):", msg);
+            console.log("Sending SESSION_ACCEPT (Type 2 with ECDH key):", msg);
             if (this.wsClient.sendMessage(msg)) {
                 // 4. Update state and start handshake timeout if message sent successfully.
-                session.updateState(this.STATE_AWAITING_PEER_KEY); // We now wait for their key (Type 4)
+                session.updateState(this.STATE_AWAITING_CHALLENGE); // We now wait for their key (Type 4)
                 this.startHandshakeTimeout(session);
                 this.uiController.updateStatus(`Waiting for ${peerId}'s public key...`);
             } else {
@@ -525,17 +528,15 @@ class SessionManager {
     }
 
     // --- Send methods called by processMessageResult ---
-    // These methods are typically called after a Session instance processes an incoming
-    // message and returns an action object requesting a specific message type be sent.
 
     /**
-     * Sends the PUBLIC_KEY_RESPONSE (Type 4) message containing own public key.
+     * Sends the PUBLIC_KEY_RESPONSE (Type 4) message containing own public ECDH key.
      * Called by initiator after receiving Type 2 (Accept) from responder.
      * @param {Session} session - The session object.
      */
     async sendPublicKeyResponse(session) {
-        console.log(`Session [${session.peerId}] Attempting to send PUBLIC_KEY_RESPONSE (Type 4)...`);
-        // Export own public key.
+        console.log(`Session [${session.peerId}] Attempting to send PUBLIC_KEY_RESPONSE (Type 4 with ECDH key)...`);
+        // Export own public ECDH key.
         const publicKeyBase64 = await session.cryptoModule.getPublicKeyBase64();
         if (!publicKeyBase64) {
             alert("Key export failed.");
@@ -544,7 +545,7 @@ class SessionManager {
         }
         // Construct and send message.
         const msg = { type: 4, payload: { targetId: session.peerId, senderId: this.identifier, publicKey: publicKeyBase64 } };
-        console.log("Sending PUBLIC_KEY_RESPONSE (Type 4):", msg);
+        console.log("Sending PUBLIC_KEY_RESPONSE (Type 4 with ECDH key):", msg);
         if (this.wsClient.sendMessage(msg)) {
             // Start handshake timeout, waiting for Type 5 (Challenge).
             this.startHandshakeTimeout(session);
@@ -556,15 +557,15 @@ class SessionManager {
     }
 
     /**
-     * Generates, encrypts, and sends the KEY_CONFIRMATION_CHALLENGE (Type 5) message.
-     * Called by responder after receiving Type 4 (Initiator's Key).
+     * Generates, encrypts (using derived AES key), and sends the KEY_CONFIRMATION_CHALLENGE (Type 5) message.
+     * Called by responder after receiving Type 4 (Initiator's Key) and deriving the session key.
      * @param {Session} session - The session object.
      */
     async sendKeyConfirmationChallenge(session) {
-        console.log(`Session [${session.peerId}] Attempting to send KEY_CONFIRMATION_CHALLENGE (Type 5)...`);
-        // Ensure peer's public key is available for encryption.
-        if (!session.peerPublicKey) {
-            this.resetSession(session.peerId, true, "Missing peer public key for challenge.");
+        console.log(`Session [${session.peerId}] Attempting to send KEY_CONFIRMATION_CHALLENGE (Type 5 using derived key)...`);
+        // Ensure the session key has been derived.
+        if (!session.cryptoModule.derivedSessionKey) {
+            this.resetSession(session.peerId, true, "Session key not derived before sending challenge.");
             return;
         }
         // Generate challenge data (e.g., unique text).
@@ -573,17 +574,28 @@ class SessionManager {
         // Store the raw challenge buffer to verify the response later.
         session.challengeSent = challengeBuffer;
         console.log("Generated challenge data.");
-        // Encrypt the challenge buffer using the peer's public RSA key.
-        const encryptedBuffer = await session.cryptoModule.encryptRSA(challengeBuffer, session.peerPublicKey);
-        if (!encryptedBuffer) {
+
+        // Encrypt the challenge buffer using the derived AES session key.
+        const encryptionResult = await session.cryptoModule.encryptAES(challengeBuffer);
+        if (!encryptionResult) {
             alert("Encrypt challenge failed.");
             this.resetSession(session.peerId, true, "Failed to encrypt challenge.");
             return;
         }
-        // Encode encrypted buffer to Base64.
-        const encryptedBase64 = session.cryptoModule.arrayBufferToBase64(encryptedBuffer);
-        // Construct and send message.
-        const msg = { type: 5, payload: { targetId: session.peerId, senderId: this.identifier, encryptedHash: encryptedBase64 } };
+        // Encode IV and encrypted buffer to Base64.
+        const ivBase64 = session.cryptoModule.arrayBufferToBase64(encryptionResult.iv);
+        const encryptedBase64 = session.cryptoModule.arrayBufferToBase64(encryptionResult.encryptedBuffer);
+
+        // Construct and send message with IV and encrypted data.
+        const msg = {
+            type: 5,
+            payload: {
+                targetId: session.peerId,
+                senderId: this.identifier,
+                iv: ivBase64,
+                encryptedChallenge: encryptedBase64 // Renamed field for clarity
+            }
+        };
         console.log("Sending KEY_CONFIRMATION_CHALLENGE (Type 5):", msg);
         if (this.wsClient.sendMessage(msg)) {
             // Start handshake timeout, waiting for Type 6 (Response).
@@ -596,29 +608,39 @@ class SessionManager {
     }
 
     /**
-     * Encrypts the received challenge data and sends it back as KEY_CONFIRMATION_RESPONSE (Type 6).
-     * Called by initiator after receiving and decrypting Type 5 (Challenge).
+     * Encrypts the received challenge data (using derived AES key) and sends it back as KEY_CONFIRMATION_RESPONSE (Type 6).
+     * Called by initiator after receiving and decrypting Type 5 (Challenge) and deriving the session key.
      * @param {Session} session - The session object.
      * @param {ArrayBuffer} challengeData - The raw decrypted challenge data received from the peer.
      */
     async sendKeyConfirmationResponse(session, challengeData) {
-        console.log(`Session [${session.peerId}] Attempting to send KEY_CONFIRMATION_RESPONSE (Type 6)...`);
-        // Ensure peer's public key and challenge data are available.
-        if (!session.peerPublicKey || !challengeData) {
-            this.resetSession(session.peerId, true, "Missing peer key or challenge data for response.");
+        console.log(`Session [${session.peerId}] Attempting to send KEY_CONFIRMATION_RESPONSE (Type 6 using derived key)...`);
+        // Ensure session key is derived and challenge data is available.
+        if (!session.cryptoModule.derivedSessionKey || !challengeData) {
+            this.resetSession(session.peerId, true, "Missing session key or challenge data for response.");
             return;
         }
-        // Encrypt the original challenge data using the peer's public RSA key.
-        const encryptedBuffer = await session.cryptoModule.encryptRSA(challengeData, session.peerPublicKey);
-        if (!encryptedBuffer) {
+        // Encrypt the original challenge data using the derived AES session key.
+        const encryptionResult = await session.cryptoModule.encryptAES(challengeData);
+        if (!encryptionResult) {
             alert("Encrypt response failed.");
             this.resetSession(session.peerId, true, "Failed to encrypt challenge response.");
             return;
         }
-        // Encode encrypted buffer to Base64.
-        const encryptedBase64 = session.cryptoModule.arrayBufferToBase64(encryptedBuffer);
-        // Construct and send message.
-        const msg = { type: 6, payload: { targetId: session.peerId, senderId: this.identifier, encryptedHash: encryptedBase64 } };
+        // Encode IV and encrypted buffer to Base64.
+        const ivBase64 = session.cryptoModule.arrayBufferToBase64(encryptionResult.iv);
+        const encryptedBase64 = session.cryptoModule.arrayBufferToBase64(encryptionResult.encryptedBuffer);
+
+        // Construct and send message with IV and encrypted data.
+        const msg = {
+            type: 6,
+            payload: {
+                targetId: session.peerId,
+                senderId: this.identifier,
+                iv: ivBase64,
+                encryptedResponse: encryptedBase64 // Renamed field for clarity
+            }
+        };
         console.log("Sending KEY_CONFIRMATION_RESPONSE (Type 6):", msg);
         if (this.wsClient.sendMessage(msg)) {
             // Start handshake timeout, waiting for Type 7 (Established).
@@ -637,7 +659,7 @@ class SessionManager {
      */
     async sendSessionEstablished(session) {
         console.log(`Session [${session.peerId}] Attempting to send SESSION_ESTABLISHED (Type 7)...`);
-        // Construct the final confirmation message.
+        // Construct the final confirmation message. Payload remains simple.
         const msg = { type: 7, payload: { targetId: session.peerId, senderId: this.identifier, message: "Session established successfully!" } };
         console.log("Sending SESSION_ESTABLISHED (Type 7):", msg);
         if (this.wsClient.sendMessage(msg)) {
@@ -654,21 +676,20 @@ class SessionManager {
     }
 
     /**
-     * Encrypts and sends a chat message (Type 8) to the specified peer.
-     * Generates a new AES key for each message, encrypts the key with RSA,
-     * encrypts the message with AES, and sends all parts.
+     * Encrypts and sends a chat message (Type 8) to the specified peer using the derived session key.
      * @param {string} peerId - The identifier of the recipient peer.
      * @param {string} text - The plaintext message to send.
      */
     async sendEncryptedMessage(peerId, text) {
         console.log(`Attempting to send encrypted message to ${peerId}: "${text}"`);
         const session = this.sessions.get(peerId);
-        // Ensure session exists, is active, and peer's public key is known.
+        // Ensure session exists and is active.
         if (!session || session.state !== this.STATE_ACTIVE_SESSION) {
             console.warn(`Cannot send message: Session with ${peerId} not active.`); return;
         }
-        if (!session.peerPublicKey) {
-            this.resetSession(peerId, true, "Encryption key error: Missing peer public key."); return;
+        // Ensure the derived session key exists within the session's crypto module.
+        if (!session.cryptoModule.derivedSessionKey) {
+            this.resetSession(peerId, true, "Encryption key error: Missing derived session key."); return;
         }
         // Ensure message text is valid.
         if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -676,7 +697,6 @@ class SessionManager {
         }
 
         // --- If we were typing, send TYPING_STOP first ---
-        // Ensures the "is typing" indicator is cleared on the peer's side before the message arrives.
         this.sendTypingStop(peerId);
         // ------------------------------------------------
 
@@ -688,39 +708,27 @@ class SessionManager {
         try {
             // 1. Encode the plaintext message to a UTF-8 ArrayBuffer.
             const messageBuffer = session.cryptoModule.encodeText(text);
-            // 2. Generate a new, single-use AES-GCM key.
-            const aesKey = await session.cryptoModule.generateSymmetricKey();
-            if (!aesKey) throw new Error("AES key generation failed.");
-            // 3. Encrypt the message buffer using the AES key (returns ciphertext and IV).
-            const aesResult = await session.cryptoModule.encryptAES(messageBuffer, aesKey);
+            // 2. Encrypt the message buffer using the derived AES session key.
+            const aesResult = await session.cryptoModule.encryptAES(messageBuffer);
             if (!aesResult) throw new Error("AES encryption failed.");
-            // 4. Export the raw AES key bytes and encode as Base64.
-            const exportedKeyBase64 = await session.cryptoModule.exportSymmetricKeyBase64(aesKey);
-            if (!exportedKeyBase64) throw new Error("AES key export failed.");
-            // 5. Convert the Base64 AES key back to a buffer for RSA encryption.
-            const keyBuffer = session.cryptoModule.base64ToArrayBuffer(exportedKeyBase64);
-            // 6. Encrypt the AES key buffer using the peer's public RSA key.
-            const encryptedKeyBuffer = await session.cryptoModule.encryptRSA(keyBuffer, session.peerPublicKey);
-            if (!encryptedKeyBuffer) throw new Error("RSA encryption of AES key failed.");
-            // 7. Encode the encrypted AES key, the IV, and the encrypted message data to Base64.
-            const encryptedKeyBase64 = session.cryptoModule.arrayBufferToBase64(encryptedKeyBuffer);
+            // 3. Encode the IV and the encrypted message data to Base64.
             const ivBase64 = session.cryptoModule.arrayBufferToBase64(aesResult.iv);
             const encryptedDataBase64 = session.cryptoModule.arrayBufferToBase64(aesResult.encryptedBuffer);
 
-            // 8. Construct the ENCRYPTED_CHAT_MESSAGE (Type 8) payload.
+            // 4. Construct the ENCRYPTED_CHAT_MESSAGE (Type 8) payload.
+            //    Note: No encryptedKey field needed anymore.
             const message = {
                 type: 8,
                 payload: {
                     targetId: peerId,
                     senderId: this.identifier,
-                    encryptedKey: encryptedKeyBase64, // RSA encrypted AES key
                     iv: ivBase64,                     // AES IV
                     data: encryptedDataBase64         // AES encrypted message
                 }
             };
             this.uiController.updateStatus(`Sending message to ${peerId}...`);
             console.log(`Sending ENCRYPTED_CHAT_MESSAGE (Type 8) to ${peerId}`);
-            // 9. Send the message via WebSocketClient.
+            // 5. Send the message via WebSocketClient.
             if (this.wsClient.sendMessage(message)) {
                 messageSent = true;
                 // Add the message to local history immediately.
@@ -873,7 +881,7 @@ class SessionManager {
         }
     }
 
-    // --- NEW: Local Typing Handlers ---
+    // --- Local Typing Handlers (No changes needed for PFS) ---
 
     /**
      * Called by main.js when the local user types in the message input for an active chat.
@@ -944,7 +952,7 @@ class SessionManager {
     }
     // ---------------------------------
 
-    // --- NEW: Peer Typing Indicator Timeout ---
+    // --- Peer Typing Indicator Timeout (No changes needed for PFS) ---
 
     /**
      * Starts a timeout to automatically hide the "peer is typing" indicator for a session
@@ -978,7 +986,7 @@ class SessionManager {
     }
     // ---------------------------------------
 
-    // --- NEW: Notify peers on disconnect (Best Effort) ---
+    // --- Notify peers on disconnect (No changes needed for PFS) ---
 
     /**
      * Attempts to send a SESSION_END (Type 9) message to all connected/handshaking peers
@@ -991,10 +999,10 @@ class SessionManager {
         this.sessions.forEach((session, peerId) => {
             // Define states where notifying the peer makes sense.
             const relevantStates = [
-                this.STATE_ACTIVE_SESSION, this.STATE_AWAITING_PEER_KEY, this.STATE_RECEIVED_PEER_KEY,
+                this.STATE_ACTIVE_SESSION, this.STATE_AWAITING_PEER_KEY,
                 this.STATE_AWAITING_CHALLENGE, this.STATE_RECEIVED_INITIATOR_KEY,
                 this.STATE_AWAITING_CHALLENGE_RESPONSE, this.STATE_RECEIVED_CHALLENGE,
-                this.STATE_AWAITING_FINAL_CONFIRMATION, this.STATE_HANDSHAKE_COMPLETE,
+                this.STATE_HANDSHAKE_COMPLETE,
                 this.STATE_INITIATING_SESSION, this.STATE_REQUEST_RECEIVED // Notify even if pending/handshaking
             ];
             // If the session is in a relevant state...
@@ -1016,7 +1024,7 @@ class SessionManager {
     }
     // -----------------------------------------------------
 
-    // --- Central Message Handling and Routing ---
+    // --- Central Message Handling and Routing (No changes needed for PFS) ---
 
     /**
      * Handles raw incoming message data from the WebSocketClient.
@@ -1046,7 +1054,6 @@ class SessionManager {
                 this.handleRegistrationFailure(payload);
                 return; // Processing complete for this message.
             }
-            // --- BEGIN REVISED Type -2 Handling ---
             if (type === -2) { // Rate Limit Exceeded / Server Error Disconnect
                 const errorMessage = payload?.error || "Server initiated disconnect (reason unspecified).";
                 console.error(`Received server error (Type -2): ${errorMessage}`);
@@ -1056,7 +1063,6 @@ class SessionManager {
                 this.handleDisconnection(errorMessage); // Pass the reason
                 return; // Stop processing this message further.
             }
-            // --- END REVISED Type -2 Handling ---
 
             // 3. Validate Sender ID for Session Messages
             // Most messages should have a senderId. Type -1 (Error) might have targetId instead.
@@ -1121,21 +1127,17 @@ class SessionManager {
 
         console.log(`Session [${session.peerId}] Action requested: ${result.action}`);
 
-        // --- Timeout Clearing Logic ---
-        // Clear handshake timeout automatically upon receiving any valid message during handshake states,
-        // except for the final SESSION_ACTIVE action which signifies completion.
+        // --- Timeout Clearing Logic (No changes needed for PFS) ---
         const handshakeStates = [
-            this.STATE_AWAITING_PEER_KEY, this.STATE_RECEIVED_PEER_KEY,
+            this.STATE_AWAITING_PEER_KEY,
             this.STATE_AWAITING_CHALLENGE, this.STATE_RECEIVED_INITIATOR_KEY,
             this.STATE_AWAITING_CHALLENGE_RESPONSE, this.STATE_RECEIVED_CHALLENGE,
-            this.STATE_AWAITING_FINAL_CONFIRMATION, this.STATE_HANDSHAKE_COMPLETE
+            this.STATE_HANDSHAKE_COMPLETE
         ];
         const wasInHandshake = handshakeStates.includes(session.state);
         if (wasInHandshake && result.action !== 'SESSION_ACTIVE') {
              this.clearHandshakeTimeout(session);
         }
-        // Clear the initial request timeout only when receiving the explicit Accept (SEND_TYPE_4 action originates)
-        // or Deny (SHOW_INFO action originates).
         if (result.action === 'SEND_TYPE_4' || result.action === 'SHOW_INFO') {
              this.clearRequestTimeout(session);
         }
@@ -1146,15 +1148,15 @@ class SessionManager {
             // Actions requesting specific message sends:
             case 'SEND_TYPE_4':
                 this.uiController.updateStatus(`Received acceptance from ${session.peerId}. Preparing response...`);
-                await this.sendPublicKeyResponse(session);
+                await this.sendPublicKeyResponse(session); // Sends ECDH key now
                 break;
             case 'SEND_TYPE_5':
                 this.uiController.updateStatus(`Received ${session.peerId}'s public key. Preparing challenge...`);
-                await this.sendKeyConfirmationChallenge(session);
+                await this.sendKeyConfirmationChallenge(session); // Sends AES encrypted challenge
                 break;
             case 'SEND_TYPE_6':
                 this.uiController.updateStatus(`Challenge received from ${session.peerId}. Preparing response...`);
-                await this.sendKeyConfirmationResponse(session, result.challengeData);
+                await this.sendKeyConfirmationResponse(session, result.challengeData); // Sends AES encrypted response
                 break;
             case 'SEND_TYPE_7':
                 this.uiController.updateStatus(`Challenge verified with ${session.peerId}. Establishing session...`);
@@ -1204,38 +1206,30 @@ class SessionManager {
                 this.resetSession(session.peerId, result.notifyUser, result.reason);
                 break;
 
-            // --- NEW: Handle Typing Indicator Actions ---
+            // Handle Typing Indicator Actions (No changes needed for PFS)
             case 'SHOW_TYPING':
-                // If this chat is displayed, show the typing indicator UI.
                 if (this.displayedPeerId === session.peerId) {
                     this.uiController.showTypingIndicator(session.peerId);
                 }
-                // Start the timeout to automatically hide the indicator later.
                 this.startTypingIndicatorTimeout(session);
                 break;
             case 'HIDE_TYPING':
-                // Clear the auto-hide timeout.
                 this.clearTypingIndicatorTimeout(session);
-                // If this chat is displayed, hide the typing indicator UI.
                 if (this.displayedPeerId === session.peerId) {
                     this.uiController.hideTypingIndicator();
                 }
                 break;
-            // ------------------------------------------
 
             // Default case for unknown or 'NONE' actions:
             case 'NONE':
             default:
-                // If no action specified, but we were in handshake, ensure timeout is still cleared
-                // as receiving *any* valid message progresses the state implicitly.
                 if (wasInHandshake) this.clearHandshakeTimeout(session);
                 break;
         }
     }
 
 
-    // --- Manager-Level Handlers ---
-    // Handle messages that affect the overall manager state, not just one session.
+    // --- Manager-Level Handlers (No changes needed for PFS) ---
 
     /**
      * Handles the registration success message (Type 0.1) from the server.
@@ -1359,8 +1353,7 @@ class SessionManager {
      * and shows the registration screen. Prevents running twice if already disconnected.
      * @param {string} [reason=null] - Optional reason for the disconnection, used for status updates.
      */
-    handleDisconnection(reason = null) { // Add optional reason parameter
-         // --- BEGIN REVISED Disconnect Handling ---
+    handleDisconnection(reason = null) {
          // Prevent running the cleanup logic multiple times
          if (this.managerState === this.STATE_DISCONNECTED) {
              console.log("handleDisconnection called but already disconnected. Skipping.");
@@ -1369,17 +1362,12 @@ class SessionManager {
          // Use the provided reason or a default message
          const disconnectReason = reason || "Connection lost.";
          console.log(`SessionManager: Handling disconnection. Reason: ${disconnectReason}`);
-         // --- END REVISED Disconnect Handling ---
 
          this.clearRegistrationTimeout(); // Clear registration timeout if it was running.
          const currentActivePeer = this.displayedPeerId; // Store potentially active peer.
 
          // If there were active sessions, reset them all.
          if (this.sessions.size > 0) {
-             // --- REMOVED ALERT FROM HERE ---
-             // The alert is now handled by the Type -2 handler if applicable.
-             // Generic disconnects won't show an alert, only update status.
-             // --- END REMOVAL ---
              const peerIds = Array.from(this.sessions.keys()); // Get all peer IDs.
              // Reset each session without individual user notification.
              peerIds.forEach(peerId => this.resetSession(peerId, false));
@@ -1392,10 +1380,7 @@ class SessionManager {
          this.identifier = null; // Clear registered identifier.
 
          // Update UI status and show the registration screen.
-         // --- BEGIN REVISED Status Update ---
-         // Use the specific reason for the status update.
          this.uiController.updateStatus(disconnectReason);
-         // --- END REVISED Status Update ---
          this.uiController.showRegistration();
     }
 
@@ -1418,7 +1403,6 @@ class SessionManager {
         this.displayedPeerId = peerId; // Set this *before* updating UI panes.
 
         // --- Hide typing indicator when switching views ---
-        // Ensures the indicator from the previously viewed chat doesn't linger.
         this.uiController.hideTypingIndicator();
         // -------------------------------------------------
 
