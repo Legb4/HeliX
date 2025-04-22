@@ -1,7 +1,7 @@
 # server/server.py
 # This file contains the core logic for the HeliX WebSocket server,
 # including client registration, message relaying, connection handling, SSL setup,
-# rate limiting, and message validation.
+# rate limiting, message validation, and active session tracking for disconnect notifications.
 
 import asyncio          # For asynchronous operations (coroutines, event loop).
 import websockets       # The WebSocket library used for server and client handling.
@@ -38,6 +38,13 @@ CONNECTION_ATTEMPTS = {}
 # Structure: { <websocket object>: [timestamp1, timestamp2, ...], ... }
 MESSAGE_TIMESTAMPS = {}
 
+# --- Active Session Tracking ---
+# ACTIVE_SESSIONS: Maps an identifier to their current active chat peer's identifier.
+# Used for disconnect notifications. Ensures bidirectional mapping (A->B and B->A).
+# Example: {'Alice123': 'Bob456', 'Bob456': 'Alice123'}
+ACTIVE_SESSIONS = {}
+
+
 # --- Helper function to send JSON messages ---
 async def send_json(websocket, message_type, payload):
     """
@@ -47,7 +54,7 @@ async def send_json(websocket, message_type, payload):
 
     Args:
         websocket: The websockets.WebSocketServerProtocol object representing the client connection.
-        message_type: The numeric type identifier for the message (e.g., 0.1, -1, -2).
+        message_type: The numeric type identifier for the message (e.g., 0.1, -1, -2, 9).
         payload: The dictionary containing the message data.
     """
     # Note: The check 'if websocket.open:' was removed. Relying on the 'await websocket.send()'
@@ -66,8 +73,10 @@ async def send_json(websocket, message_type, payload):
         # Log a warning specifically if the send fails because the connection is already closed.
         # This is expected if the client disconnects abruptly or if we send just before closing.
         logging.warning(f"Failed to send to {websocket.remote_address} ({CONNECTIONS.get(websocket, 'N/A')}) because connection is closed: {e}")
-    # Other exceptions during json.dumps or websocket.send (less common) will propagate
-    # up to the main handler's try/except block for more general error logging.
+    except Exception as e:
+        # Catch other exceptions during json.dumps or websocket.send (less common)
+        logging.exception(f"Unexpected error sending JSON to {websocket.remote_address} ({CONNECTIONS.get(websocket, 'N/A')})")
+
 
 # --- Registration Logic ---
 async def handle_registration(websocket, identifier):
@@ -121,21 +130,48 @@ async def handle_registration(websocket, identifier):
 def unregister_client(websocket):
     """
     Removes a client's registration information from the global registries (CLIENTS and CONNECTIONS).
-    This is typically called when a client disconnects.
+    If the client was in an active session, attempts to notify the peer (Type 9).
+    Also cleans up session tracking in ACTIVE_SESSIONS.
 
     Args:
         websocket: The WebSocket connection object of the client that disconnected.
     """
+    peer_id = None # Initialize peer_id
+    identifier = None # Initialize identifier
+
     # Check if the disconnecting client was actually registered (i.e., present in CONNECTIONS).
     if websocket in CONNECTIONS:
         # Retrieve the identifier associated with this connection.
         identifier = CONNECTIONS[websocket]
         logging.info(f"Unregistering client {websocket.remote_address} with ID '{identifier}'")
+
+        # --- BEGIN Disconnect Notification Logic ---
+        # Check if this client was in an active session.
+        if identifier in ACTIVE_SESSIONS:
+            peer_id = ACTIVE_SESSIONS.pop(identifier, None) # Get peer and remove sender's entry
+            if peer_id and peer_id in ACTIVE_SESSIONS:
+                ACTIVE_SESSIONS.pop(peer_id, None) # Remove peer's entry if it exists
+            logging.info(f"Cleared active session tracking for {identifier} and {peer_id}")
+
+            # If a peer was found, try to notify them.
+            if peer_id:
+                peer_websocket = CLIENTS.get(peer_id)
+                if peer_websocket: # Check if the peer is still connected
+                    logging.info(f"Notifying peer {peer_id} about {identifier}'s disconnection.")
+                    # Construct the Type 9 payload (Session End)
+                    notification_payload = {"targetId": peer_id, "senderId": identifier}
+                    # Schedule the send operation as a task so it doesn't block unregister_client
+                    asyncio.create_task(send_json(peer_websocket, 9, notification_payload))
+                else:
+                    logging.info(f"Peer {peer_id} was already disconnected. No notification sent.")
+        # --- END Disconnect Notification Logic ---
+
         # Remove the entry from the CLIENTS registry (ID -> connection).
         if identifier in CLIENTS:
             del CLIENTS[identifier]
         # Remove the entry from the CONNECTIONS registry (connection -> ID).
-        del CONNECTIONS[websocket]
+        del CONNECTIONS[websocket] # Do this after potentially using the identifier
+
     else:
         # Log if a client disconnects without ever registering an ID.
         logging.info(f"Client {websocket.remote_address} disconnected but had no registered ID.")
@@ -146,7 +182,8 @@ async def connection_handler(websocket):
     """
     The main asynchronous function that handles an individual client's WebSocket connection lifecycle.
     Implements connection rate limiting, listens for incoming messages, validates and rate limits them,
-    routes messages (registration or relay), and handles errors and disconnection cleanup.
+    routes messages (registration or relay), updates active session tracking,
+    and handles errors and disconnection cleanup.
 
     Args:
         websocket: The websockets.WebSocketServerProtocol object representing the connected client.
@@ -190,14 +227,9 @@ async def connection_handler(websocket):
             # Check if the limit is exceeded.
             if len(valid_message_times) >= config.MAX_MESSAGES_PER_CONNECTION:
                 logging.warning(f"Message rate limit exceeded for {websocket.remote_address} ({CONNECTIONS.get(websocket, 'Unregistered')}). Sending notification and closing connection.")
-
-                # --- BEGIN MODIFICATION ---
                 # Send Type -2 error message to the client before closing.
                 error_payload = {"error": "Message rate limit exceeded. Disconnecting."}
-                # Use Type -2 to indicate rate limit violation specifically.
                 await send_json(websocket, -2, error_payload)
-                # --- END MODIFICATION ---
-
                 # Now close the connection.
                 await websocket.close(code=1008, reason="Message rate limit exceeded")
                 break # Exit the message loop.
@@ -232,8 +264,6 @@ async def connection_handler(websocket):
                     continue
                 if not isinstance(payload, dict):
                      # Allow non-dict payloads only for specific types if needed in future, otherwise enforce dict
-                     # Example: if message_type == 99 and isinstance(payload, str): pass
-                     # For now, assume payload should generally be a dictionary
                      logging.warning(f"Invalid 'payload' (not a dictionary) in message from {websocket.remote_address}. Ignoring: {data}")
                      continue
 
@@ -247,8 +277,6 @@ async def connection_handler(websocket):
                     if not identifier or not isinstance(identifier, str) or len(identifier.strip()) == 0 or len(identifier) > 50:
                         logging.warning(f"Invalid 'identifier' in Type 0 payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
-                        # Optionally send specific error back for bad registration format
-                        # await send_json(websocket, 0.2, {"identifier": identifier, "error": "Invalid identifier format."})
                 elif message_type in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]: # Relayable message types
                     # Check targetId
                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
@@ -287,6 +315,27 @@ async def connection_handler(websocket):
                             logging.info(f"Relaying message to {target_id} ({target_websocket.remote_address})")
                             # Send the original, validated JSON message string to the target client.
                             await target_websocket.send(message)
+
+                            # --- BEGIN Session Tracking Update ---
+                            # If a Type 2 (Accept) is successfully relayed, record the session.
+                            if message_type == 2:
+                                logging.info(f"Recording active session between {sender_id} and {target_id}")
+                                ACTIVE_SESSIONS[sender_id] = target_id
+                                ACTIVE_SESSIONS[target_id] = sender_id # Record the reverse mapping too
+
+                            # If a Type 9 (End Session) is successfully relayed, clear the session.
+                            elif message_type == 9:
+                                logging.info(f"Clearing active session between {sender_id} and {target_id} due to Type 9 message relay.")
+                                if sender_id in ACTIVE_SESSIONS:
+                                    # Check if the stored peer matches the target before deleting
+                                    if ACTIVE_SESSIONS[sender_id] == target_id:
+                                        del ACTIVE_SESSIONS[sender_id]
+                                if target_id in ACTIVE_SESSIONS:
+                                     # Check if the stored peer matches the sender before deleting
+                                    if ACTIVE_SESSIONS[target_id] == sender_id:
+                                        del ACTIVE_SESSIONS[target_id]
+                            # --- END Session Tracking Update ---
+
                         except websockets.exceptions.ConnectionClosed:
                             # Handle the case where the target client disconnected *during* the send attempt.
                             logging.warning(f"Relay failed: Target user '{target_id}' connection closed during send attempt.")
@@ -330,8 +379,8 @@ async def connection_handler(websocket):
         if websocket in MESSAGE_TIMESTAMPS:
             del MESSAGE_TIMESTAMPS[websocket]
             logging.debug(f"Removed message timestamp tracking for {websocket.remote_address}")
-        # Ensure the client is unregistered from the global registries.
-        unregister_client(websocket)
+        # Ensure the client is unregistered from the global registries AND handle disconnect notification.
+        unregister_client(websocket) # This now includes the notification logic
         logging.info(f"Connection closed for {websocket.remote_address}")
         # Optional: Log exit from the handler for clarity during debugging.
         # logging.info(f"--- Exiting connection_handler for {websocket.remote_address} ---")
