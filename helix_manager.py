@@ -252,14 +252,10 @@ def read_config():
             else: print(f"Warning: Could not find WSS PORT setting in {config_file_path}, using default {settings['wss_port']}.")
 
             # --- HTTPS Settings Parsing ---
-            https_host_match = re.search(r"^HTTPS_HOST\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
-            https_port_match = re.search(r"^HTTPS_PORT\s*=\s*(\d+)", content, re.MULTILINE)
+            https_host_match = re.search(r"^HOST\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
 
             if https_host_match: settings['https_host'] = https_host_match.group(1)
             else: print(f"Warning: Could not find HTTPS_HOST setting in {config_file_path}, using default '{settings['https_host']}'.")
-
-            if https_port_match: settings['https_port'] = int(https_port_match.group(1))
-            else: print(f"Warning: Could not find HTTPS_PORT setting in {config_file_path}, using default {settings['https_port']}.")
 
     except FileNotFoundError: print(f"Warning: {config_file_path} not found. Using default settings for WSS and HTTPS.")
     except Exception as e: print(f"Warning: Error reading {config_file_path}: {e}. Using default settings.")
