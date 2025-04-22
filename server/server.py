@@ -1,7 +1,8 @@
 # server/server.py
 # This file contains the core logic for the HeliX WebSocket server,
 # including client registration, message relaying, connection handling, SSL setup,
-# rate limiting, message validation, and active session tracking for disconnect notifications.
+# rate limiting, message validation, identifier sanitization,
+# and active session tracking for disconnect notifications.
 
 import asyncio          # For asynchronous operations (coroutines, event loop).
 import websockets       # The WebSocket library used for server and client handling.
@@ -9,6 +10,7 @@ import logging          # For logging server events, warnings, and errors.
 import json             # For parsing and serializing JSON messages between client and server.
 import ssl              # For creating SSL contexts if WSS (Secure WebSockets) is enabled.
 import time             # For rate limiting timestamps
+import re               # For identifier validation using regex
 import config           # Imports server configuration (HOST, PORT, SSL settings, Rate Limits).
 
 
@@ -16,6 +18,13 @@ import config           # Imports server configuration (HOST, PORT, SSL settings
 # Level INFO means INFO, WARNING, ERROR, CRITICAL messages will be shown.
 # Format includes timestamp, log level, and the message itself.
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# --- Identifier Validation ---
+# Regex pattern for valid identifiers:
+# - Starts with a letter or number (^[a-zA-Z0-9])
+# - Contains only letters, numbers, underscores, hyphens ([a-zA-Z0-9_-]*)
+# - Is between 3 and 30 characters long ({2,29}$) - Note: {2,29} because the first char is already matched.
+VALID_IDENTIFIER_REGEX = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{2,29}$")
 
 # --- Global Registries ---
 
@@ -54,12 +63,9 @@ async def send_json(websocket, message_type, payload):
 
     Args:
         websocket: The websockets.WebSocketServerProtocol object representing the client connection.
-        message_type: The numeric type identifier for the message (e.g., 0.1, -1, -2, 9).
+        message_type: The numeric type identifier for the message (e.g., 0.1, 0.2, -1, -2, 9).
         payload: The dictionary containing the message data.
     """
-    # Note: The check 'if websocket.open:' was removed. Relying on the 'await websocket.send()'
-    # call itself to raise ConnectionClosed exceptions is generally more robust in asyncio,
-    # as the state could potentially change between the check and the send operation.
     try:
         # Create the message dictionary.
         message_dict = {"type": message_type, "payload": payload}
@@ -71,7 +77,6 @@ async def send_json(websocket, message_type, payload):
         await websocket.send(message)
     except websockets.exceptions.ConnectionClosed as e:
         # Log a warning specifically if the send fails because the connection is already closed.
-        # This is expected if the client disconnects abruptly or if we send just before closing.
         logging.warning(f"Failed to send to {websocket.remote_address} ({CONNECTIONS.get(websocket, 'N/A')}) because connection is closed: {e}")
     except Exception as e:
         # Catch other exceptions during json.dumps or websocket.send (less common)
@@ -82,25 +87,17 @@ async def send_json(websocket, message_type, payload):
 async def handle_registration(websocket, identifier):
     """
     Handles a client's registration request (Type 0 message).
-    Validates the identifier, checks if it's already taken or if the client is already registered,
+    Validates the identifier using regex, checks if it's already taken or if the client is already registered,
     and updates the global CLIENTS and CONNECTIONS registries if successful.
     Sends a success (Type 0.1) or failure (Type 0.2) response back to the client.
+    Assumes basic validation (type, existence, format) happened before calling this.
 
     Args:
         websocket: The WebSocket connection object of the client attempting to register.
-        identifier: The identifier string provided by the client.
+        identifier: The validated identifier string provided by the client.
     """
     client_address = websocket.remote_address
     logging.info(f"Handling registration request for '{identifier}' from {client_address}")
-
-    # --- Input Validation ---
-    # Check if identifier is missing, not a string, or too long.
-    # (Validation moved to main handler, but keeping basic check here for clarity)
-    if not identifier or not isinstance(identifier, str) or len(identifier) > 50:
-         # Send failure message (Type 0.2) back to the client.
-         await send_json(websocket, 0.2, {"identifier": identifier, "error": "Invalid identifier format."})
-         logging.warning(f"Invalid identifier format from {client_address}: '{identifier}'")
-         return # Stop processing this registration request.
 
     # --- Check Availability ---
     # Check if the requested identifier is already present in the CLIENTS registry.
@@ -274,9 +271,21 @@ async def connection_handler(websocket):
 
                 if message_type == 0: # Registration
                     identifier = payload.get("identifier")
-                    if not identifier or not isinstance(identifier, str) or len(identifier.strip()) == 0 or len(identifier) > 50:
-                        logging.warning(f"Invalid 'identifier' in Type 0 payload from {websocket.remote_address}. Ignoring: {payload}")
-                        validation_passed = False
+                    # Check type and existence first
+                    if not identifier or not isinstance(identifier, str):
+                         logging.warning(f"Invalid identifier type in Type 0 payload from {websocket.remote_address}. Ignoring: {payload}")
+                         validation_passed = False
+                         # Send error back immediately if basic type is wrong
+                         await send_json(websocket, 0.2, {"identifier": identifier, "error": "Identifier must be a non-empty string."})
+                    # Then check format using regex
+                    elif not VALID_IDENTIFIER_REGEX.match(identifier):
+                        logging.warning(f"Invalid identifier format in Type 0 payload from {websocket.remote_address}. Sending error back.")
+                        # --- BEGIN FIX ---
+                        # Send Type 0.2 error immediately upon detecting invalid format
+                        error_msg = "Invalid identifier format. Must be 3-30 characters, start with a letter/number, and contain only letters, numbers, underscores, or hyphens."
+                        await send_json(websocket, 0.2, {"identifier": identifier, "error": error_msg})
+                        # --- END FIX ---
+                        validation_passed = False # Ensure we still skip further processing
                 elif message_type in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]: # Relayable message types
                     # Check targetId
                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
