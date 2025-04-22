@@ -280,11 +280,9 @@ async def connection_handler(websocket):
                     # Then check format using regex
                     elif not VALID_IDENTIFIER_REGEX.match(identifier):
                         logging.warning(f"Invalid identifier format in Type 0 payload from {websocket.remote_address}. Sending error back.")
-                        # --- BEGIN FIX ---
                         # Send Type 0.2 error immediately upon detecting invalid format
                         error_msg = "Invalid identifier format. Must be 3-30 characters, start with a letter/number, and contain only letters, numbers, underscores, or hyphens."
                         await send_json(websocket, 0.2, {"identifier": identifier, "error": error_msg})
-                        # --- END FIX ---
                         validation_passed = False # Ensure we still skip further processing
                 elif message_type in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]: # Relayable message types
                     # Check targetId
@@ -348,9 +346,11 @@ async def connection_handler(websocket):
                         except websockets.exceptions.ConnectionClosed:
                             # Handle the case where the target client disconnected *during* the send attempt.
                             logging.warning(f"Relay failed: Target user '{target_id}' connection closed during send attempt.")
+                            # --- BEGIN Standardized Error ---
                             # Send an error message (Type -1) back to the original sender.
-                            error_payload = {"targetId": target_id, "message": f"User '{target_id}' disconnected during send."}
+                            error_payload = {"targetId": target_id, "message": f"User '{target_id}' is unavailable."} # Standardized message
                             await send_json(websocket, -1, error_payload)
+                            # --- END Standardized Error ---
                         except Exception as e:
                              # Catch any other unexpected errors during the relay send.
                              logging.exception(f"Unexpected error relaying message to {target_id}")
@@ -358,9 +358,11 @@ async def connection_handler(websocket):
                     else:
                         # Target client ID not found in the CLIENTS registry (not online or never registered).
                         logging.warning(f"Target user '{target_id}' not found. Sending error back to '{sender_id}'.")
+                        # --- BEGIN Standardized Error ---
                         # Send an error message (Type -1) back to the original sender.
-                        error_payload = {"targetId": target_id, "message": f"User '{target_id}' not found or disconnected."}
+                        error_payload = {"targetId": target_id, "message": f"User '{target_id}' is unavailable."} # Standardized message
                         await send_json(websocket, -1, error_payload)
+                        # --- END Standardized Error ---
                 else:
                     # Received a non-registration message from a client that hasn't registered yet.
                     logging.warning(f"Received non-registration message type {message_type} from unregistered client {websocket.remote_address}. Ignoring.")
