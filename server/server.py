@@ -1,13 +1,15 @@
 # server/server.py
 # This file contains the core logic for the HeliX WebSocket server,
-# including client registration, message relaying, connection handling, and SSL setup.
+# including client registration, message relaying, connection handling, SSL setup,
+# rate limiting, and message validation.
 
 import asyncio          # For asynchronous operations (coroutines, event loop).
 import websockets       # The WebSocket library used for server and client handling.
 import logging          # For logging server events, warnings, and errors.
 import json             # For parsing and serializing JSON messages between client and server.
 import ssl              # For creating SSL contexts if WSS (Secure WebSockets) is enabled.
-import config           # Imports server configuration (HOST, PORT, SSL settings).
+import time             # For rate limiting timestamps
+import config           # Imports server configuration (HOST, PORT, SSL settings, Rate Limits).
 
 
 # Configure basic logging (can also be done in main.py, ensures it's set).
@@ -27,6 +29,15 @@ CLIENTS = {}
 # Example: {<WebSocketConnection object for Alice>: 'Alice123', <WebSocketConnection object for Bob>: 'Bob456'}
 CONNECTIONS = {}
 
+# --- Rate Limiting State ---
+# CONNECTION_ATTEMPTS: Tracks recent connection timestamps per IP address.
+# Structure: { 'ip_address': [timestamp1, timestamp2, ...], ... }
+CONNECTION_ATTEMPTS = {}
+
+# MESSAGE_TIMESTAMPS: Tracks recent message timestamps per active WebSocket connection.
+# Structure: { <websocket object>: [timestamp1, timestamp2, ...], ... }
+MESSAGE_TIMESTAMPS = {}
+
 # --- Helper function to send JSON messages ---
 async def send_json(websocket, message_type, payload):
     """
@@ -36,7 +47,7 @@ async def send_json(websocket, message_type, payload):
 
     Args:
         websocket: The websockets.WebSocketServerProtocol object representing the client connection.
-        message_type: The numeric type identifier for the message (e.g., 0.1, -1).
+        message_type: The numeric type identifier for the message (e.g., 0.1, -1, -2).
         payload: The dictionary containing the message data.
     """
     # Note: The check 'if websocket.open:' was removed. Relying on the 'await websocket.send()'
@@ -53,7 +64,7 @@ async def send_json(websocket, message_type, payload):
         await websocket.send(message)
     except websockets.exceptions.ConnectionClosed as e:
         # Log a warning specifically if the send fails because the connection is already closed.
-        # This is expected if the client disconnects abruptly.
+        # This is expected if the client disconnects abruptly or if we send just before closing.
         logging.warning(f"Failed to send to {websocket.remote_address} ({CONNECTIONS.get(websocket, 'N/A')}) because connection is closed: {e}")
     # Other exceptions during json.dumps or websocket.send (less common) will propagate
     # up to the main handler's try/except block for more general error logging.
@@ -75,6 +86,7 @@ async def handle_registration(websocket, identifier):
 
     # --- Input Validation ---
     # Check if identifier is missing, not a string, or too long.
+    # (Validation moved to main handler, but keeping basic check here for clarity)
     if not identifier or not isinstance(identifier, str) or len(identifier) > 50:
          # Send failure message (Type 0.2) back to the client.
          await send_json(websocket, 0.2, {"identifier": identifier, "error": "Invalid identifier format."})
@@ -133,51 +145,138 @@ def unregister_client(websocket):
 async def connection_handler(websocket):
     """
     The main asynchronous function that handles an individual client's WebSocket connection lifecycle.
-    It listens for incoming messages, parses them, routes them (registration or relay),
-    and handles errors and disconnection cleanup.
+    Implements connection rate limiting, listens for incoming messages, validates and rate limits them,
+    routes messages (registration or relay), and handles errors and disconnection cleanup.
 
     Args:
         websocket: The websockets.WebSocketServerProtocol object representing the connected client.
     """
-    client_address = websocket.remote_address
-    logging.info(f"Client connected from {client_address}")
+    client_ip = websocket.remote_address[0] # Get IP address (index 0 of the tuple)
+    logging.info(f"Client attempting connection from {client_ip}:{websocket.remote_address[1]}")
+
+    # --- Connection Rate Limiting ---
+    current_time = time.time()
+    # Get the list of recent connection timestamps for this IP, default to empty list if none.
+    connection_times = CONNECTION_ATTEMPTS.get(client_ip, [])
+    # Filter out timestamps older than the defined window.
+    valid_attempts = [t for t in connection_times if current_time - t < config.CONNECTION_WINDOW_SECONDS]
+    # Check if the number of valid recent attempts exceeds the limit.
+    if len(valid_attempts) >= config.MAX_CONNECTIONS_PER_IP:
+        logging.warning(f"Connection rate limit exceeded for IP {client_ip}. Closing connection.")
+        # Close the connection immediately with a specific code (e.g., 1008 Policy Violation).
+        await websocket.close(code=1008, reason="Connection rate limit exceeded")
+        # Update the list in the dictionary (optional, helps keep it trimmed)
+        CONNECTION_ATTEMPTS[client_ip] = valid_attempts
+        return # Exit the handler, preventing further processing for this connection.
+    else:
+        # If limit not exceeded, add the current timestamp and update the dictionary.
+        valid_attempts.append(current_time)
+        CONNECTION_ATTEMPTS[client_ip] = valid_attempts
+        logging.info(f"Connection accepted from {client_ip}:{websocket.remote_address[1]}")
+        # Initialize message timestamp tracking for this new connection
+        MESSAGE_TIMESTAMPS[websocket] = []
 
     try:
         # --- Message Receiving Loop ---
         # Continuously listen for messages from this client.
         # The loop breaks automatically if the connection is closed.
         async for message in websocket:
+            current_time = time.time() # Get time for message rate limiting
+
+            # --- Message Rate Limiting ---
+            message_times = MESSAGE_TIMESTAMPS.get(websocket, [])
+            # Filter out old message timestamps.
+            valid_message_times = [t for t in message_times if current_time - t < config.MESSAGE_WINDOW_SECONDS]
+            # Check if the limit is exceeded.
+            if len(valid_message_times) >= config.MAX_MESSAGES_PER_CONNECTION:
+                logging.warning(f"Message rate limit exceeded for {websocket.remote_address} ({CONNECTIONS.get(websocket, 'Unregistered')}). Sending notification and closing connection.")
+
+                # --- BEGIN MODIFICATION ---
+                # Send Type -2 error message to the client before closing.
+                error_payload = {"error": "Message rate limit exceeded. Disconnecting."}
+                # Use Type -2 to indicate rate limit violation specifically.
+                await send_json(websocket, -2, error_payload)
+                # --- END MODIFICATION ---
+
+                # Now close the connection.
+                await websocket.close(code=1008, reason="Message rate limit exceeded")
+                break # Exit the message loop.
+            else:
+                # If limit not exceeded, add current timestamp.
+                valid_message_times.append(current_time)
+                MESSAGE_TIMESTAMPS[websocket] = valid_message_times
+
             # Log the raw message received, including the client's ID if registered.
-            logging.info(f"Raw message received from {client_address} ({CONNECTIONS.get(websocket, 'Unregistered')}): {message}")
+            logging.info(f"Raw message received from {websocket.remote_address} ({CONNECTIONS.get(websocket, 'Unregistered')}): {message}")
+
             try:
-                # --- Message Parsing and Basic Validation ---
-                # Attempt to parse the incoming message string as JSON.
-                data = json.loads(message)
-                # Extract the message type and payload. Use .get() for safety if keys might be missing.
+                # --- Message Parsing and Stricter Validation ---
+                data = None # Initialize data to None
+                try:
+                    data = json.loads(message)
+                except json.JSONDecodeError:
+                    logging.warning(f"Invalid JSON received from {websocket.remote_address}. Ignoring.")
+                    continue # Skip to the next message
+
+                # Basic structure validation
+                if not isinstance(data, dict):
+                    logging.warning(f"Received non-dictionary data from {websocket.remote_address}. Ignoring: {data}")
+                    continue
                 message_type = data.get("type")
                 payload = data.get("payload")
+                if message_type is None or payload is None:
+                    logging.warning(f"Missing 'type' or 'payload' in message from {websocket.remote_address}. Ignoring: {data}")
+                    continue
+                if not isinstance(message_type, (int, float)): # Allow numeric types
+                    logging.warning(f"Invalid 'type' (not a number) in message from {websocket.remote_address}. Ignoring: {data}")
+                    continue
+                if not isinstance(payload, dict):
+                     # Allow non-dict payloads only for specific types if needed in future, otherwise enforce dict
+                     # Example: if message_type == 99 and isinstance(payload, str): pass
+                     # For now, assume payload should generally be a dictionary
+                     logging.warning(f"Invalid 'payload' (not a dictionary) in message from {websocket.remote_address}. Ignoring: {data}")
+                     continue
 
-                # --- Message Routing ---
+                # Type-specific payload validation
+                validation_passed = True
+                sender_id = CONNECTIONS.get(websocket) # Get sender ID if registered
+                target_id = payload.get("targetId") if isinstance(payload, dict) else None
+
+                if message_type == 0: # Registration
+                    identifier = payload.get("identifier")
+                    if not identifier or not isinstance(identifier, str) or len(identifier.strip()) == 0 or len(identifier) > 50:
+                        logging.warning(f"Invalid 'identifier' in Type 0 payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                        # Optionally send specific error back for bad registration format
+                        # await send_json(websocket, 0.2, {"identifier": identifier, "error": "Invalid identifier format."})
+                elif message_type in [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]: # Relayable message types
+                    # Check targetId
+                    if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                    # Check senderId consistency if client is registered
+                    elif sender_id:
+                        payload_sender_id = payload.get("senderId")
+                        if not payload_sender_id or payload_sender_id != sender_id:
+                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
+                             validation_passed = False
+                    # Additional checks for Type 8 (Encrypted Message)
+                    elif message_type == 8:
+                        if not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['encryptedKey', 'iv', 'data']):
+                            logging.warning(f"Missing or invalid fields in Type 8 payload from {websocket.remote_address}. Ignoring: {payload}")
+                            validation_passed = False
+                # Add checks for other types if they have specific payload requirements
+
+                if not validation_passed:
+                    continue # Skip processing this invalid message
+
+                # --- Message Routing (Post-Validation) ---
                 if message_type == 0: # Registration Request
-                    # Check if payload exists and contains the 'identifier' key.
-                    if payload and "identifier" in payload:
-                        # Call the registration handler.
-                        await handle_registration(websocket, payload["identifier"])
-                    else:
-                         # Log malformed registration requests.
-                         logging.warning(f"Malformed registration request from {client_address}: {message}")
+                    # Call the registration handler (identifier already validated above)
+                    await handle_registration(websocket, payload["identifier"])
                 # --- Message Relaying (for registered clients) ---
-                elif websocket in CONNECTIONS: # Check if the sender is registered.
-                    # Get the sender's registered identifier.
-                    sender_id = CONNECTIONS[websocket]
-                    # Extract the target identifier from the payload.
-                    target_id = payload.get("targetId") if payload else None
-
-                    # Validate that a targetId exists for relayable messages.
-                    if not target_id:
-                        logging.warning(f"Received message type {message_type} without targetId from {sender_id}: {message}")
-                        continue # Skip processing this message.
-
+                elif sender_id: # Check if the sender is registered.
+                    # Target ID already extracted and validated above.
                     logging.info(f"Attempting to relay message type {message_type} from '{sender_id}' to '{target_id}'")
                     # Look up the target client's WebSocket connection using their ID.
                     target_websocket = CLIENTS.get(target_id)
@@ -186,8 +285,7 @@ async def connection_handler(websocket):
                     if target_websocket: # Check if the target client is currently connected and registered.
                         try:
                             logging.info(f"Relaying message to {target_id} ({target_websocket.remote_address})")
-                            # Send the original, unmodified JSON message string to the target client.
-                            # The server does not need to understand the payload content for E2EE chat messages.
+                            # Send the original, validated JSON message string to the target client.
                             await target_websocket.send(message)
                         except websockets.exceptions.ConnectionClosed:
                             # Handle the case where the target client disconnected *during* the send attempt.
@@ -207,36 +305,36 @@ async def connection_handler(websocket):
                         await send_json(websocket, -1, error_payload)
                 else:
                     # Received a non-registration message from a client that hasn't registered yet.
-                    logging.warning(f"Received non-registration message from unregistered client {client_address}. Ignoring.")
+                    logging.warning(f"Received non-registration message type {message_type} from unregistered client {websocket.remote_address}. Ignoring.")
 
-            except json.JSONDecodeError:
-                # Handle errors if the received message is not valid JSON.
-                logging.error(f"Could not decode JSON from {client_address}: {message}")
             except Exception as e:
                 # Catch any other errors that occur during the processing of a single message
                 # (e.g., unexpected payload structure, errors in handlers).
-                logging.exception(f"Error processing message from {client_address} ({CONNECTIONS.get(websocket, 'Unregistered')}): {message}")
+                logging.exception(f"Error processing message from {websocket.remote_address} ({CONNECTIONS.get(websocket, 'Unregistered')}): {message}")
                 # Consider sending a generic error back to the client if appropriate.
 
     # --- Connection Closed Handling ---
     except websockets.exceptions.ConnectionClosedOK:
         # Log when a client disconnects cleanly (e.g., browser closed, client called disconnect).
-        logging.info(f"Client {client_address} disconnected gracefully.")
+        logging.info(f"Client {websocket.remote_address} disconnected gracefully.")
     except websockets.exceptions.ConnectionClosedError as e:
         # Log when a client disconnects due to an error (e.g., network interruption).
-        logging.info(f"Client {client_address} disconnected with error: {e}")
+        logging.info(f"Client {websocket.remote_address} disconnected with error: {e}")
     except Exception as e:
         # Catch any unexpected errors in the main connection handling loop itself
         # (outside the message processing loop).
-        logging.exception(f"An unexpected error occurred handling client {client_address}")
+        logging.exception(f"An unexpected error occurred handling client {websocket.remote_address}")
     finally:
         # --- Cleanup ---
-        # This block executes regardless of how the 'try' block exits (normal close, error, etc.).
+        # Remove message rate limiting data for this connection
+        if websocket in MESSAGE_TIMESTAMPS:
+            del MESSAGE_TIMESTAMPS[websocket]
+            logging.debug(f"Removed message timestamp tracking for {websocket.remote_address}")
         # Ensure the client is unregistered from the global registries.
         unregister_client(websocket)
-        logging.info(f"Connection closed for {client_address}")
+        logging.info(f"Connection closed for {websocket.remote_address}")
         # Optional: Log exit from the handler for clarity during debugging.
-        # logging.info(f"--- Exiting connection_handler for {client_address} ---")
+        # logging.info(f"--- Exiting connection_handler for {websocket.remote_address} ---")
 
 
 # --- Server Startup Function ---
@@ -278,6 +376,9 @@ async def start_server(host, port):
     # Determine the effective protocol based on whether SSL context was successfully created.
     effective_protocol = "wss" if ssl_context else "ws"
     logging.info(f"Starting server on {effective_protocol}://{host}:{port}")
+    logging.info(f"Connection Rate Limit: {config.MAX_CONNECTIONS_PER_IP} per {config.CONNECTION_WINDOW_SECONDS}s per IP")
+    logging.info(f"Message Rate Limit: {config.MAX_MESSAGES_PER_CONNECTION} per {config.MESSAGE_WINDOW_SECONDS}s per Connection")
+
 
     try:
         # Start the WebSocket server using websockets.serve.

@@ -34,3 +34,17 @@ KEY_FILE = os.path.join(CERT_DIR, 'key.pem')
 # Set to True to use WSS (requires valid CERT_FILE and KEY_FILE).
 # Set to False to use WS (unencrypted, generally only for local testing).
 ENABLE_SSL = True
+
+# --- Rate Limiting Configuration ---
+
+# Connection Rate Limiting (per IP address)
+# Maximum number of connection attempts allowed from a single IP within the specified time window.
+MAX_CONNECTIONS_PER_IP = 10
+# Time window in seconds for connection rate limiting.
+CONNECTION_WINDOW_SECONDS = 60
+
+# Message Rate Limiting (per connection)
+# Maximum number of messages allowed from a single connection within the specified time window.
+MAX_MESSAGES_PER_CONNECTION = 20
+# Time window in seconds for message rate limiting.
+MESSAGE_WINDOW_SECONDS = 5

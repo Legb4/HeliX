@@ -1037,7 +1037,7 @@ class SessionManager {
 
             console.log(`Parsed message: Type=${type}, From=${senderId || 'N/A'}, Payload=`, payload);
 
-            // 2. Handle Manager-Level Messages (Registration Replies)
+            // 2. Handle Manager-Level Messages (Registration Replies, Server Errors)
             if (type === 0.1) { // Registration Success
                 this.handleRegistrationSuccess(payload);
                 return; // Processing complete for this message.
@@ -1046,6 +1046,17 @@ class SessionManager {
                 this.handleRegistrationFailure(payload);
                 return; // Processing complete for this message.
             }
+            // --- BEGIN REVISED Type -2 Handling ---
+            if (type === -2) { // Rate Limit Exceeded / Server Error Disconnect
+                const errorMessage = payload?.error || "Server initiated disconnect (reason unspecified).";
+                console.error(`Received server error (Type -2): ${errorMessage}`);
+                // Alert the user immediately.
+                alert(`Disconnected by Server: ${errorMessage}`);
+                // Immediately trigger the disconnection cleanup and UI reset logic.
+                this.handleDisconnection(errorMessage); // Pass the reason
+                return; // Stop processing this message further.
+            }
+            // --- END REVISED Type -2 Handling ---
 
             // 3. Validate Sender ID for Session Messages
             // Most messages should have a senderId. Type -1 (Error) might have targetId instead.
@@ -1343,31 +1354,48 @@ class SessionManager {
     }
 
     /**
-     * Handles the WebSocket disconnection event.
+     * Handles the WebSocket disconnection event OR a forced disconnect trigger.
      * Clears all session timeouts, resets all sessions, updates manager state,
-     * and shows the registration screen.
+     * and shows the registration screen. Prevents running twice if already disconnected.
+     * @param {string} [reason=null] - Optional reason for the disconnection, used for status updates.
      */
-    handleDisconnection() {
-         console.log("SessionManager: Detected server disconnection.");
+    handleDisconnection(reason = null) { // Add optional reason parameter
+         // --- BEGIN REVISED Disconnect Handling ---
+         // Prevent running the cleanup logic multiple times
+         if (this.managerState === this.STATE_DISCONNECTED) {
+             console.log("handleDisconnection called but already disconnected. Skipping.");
+             return;
+         }
+         // Use the provided reason or a default message
+         const disconnectReason = reason || "Connection lost.";
+         console.log(`SessionManager: Handling disconnection. Reason: ${disconnectReason}`);
+         // --- END REVISED Disconnect Handling ---
+
          this.clearRegistrationTimeout(); // Clear registration timeout if it was running.
          const currentActivePeer = this.displayedPeerId; // Store potentially active peer.
 
-         // If there were active sessions, notify user and reset them all.
+         // If there were active sessions, reset them all.
          if (this.sessions.size > 0) {
-             alert("Disconnected from server. All active sessions have been reset.");
+             // --- REMOVED ALERT FROM HERE ---
+             // The alert is now handled by the Type -2 handler if applicable.
+             // Generic disconnects won't show an alert, only update status.
+             // --- END REMOVAL ---
              const peerIds = Array.from(this.sessions.keys()); // Get all peer IDs.
-             // Reset each session without individual user notification (one alert is enough).
+             // Reset each session without individual user notification.
              peerIds.forEach(peerId => this.resetSession(peerId, false));
          }
 
          // Update manager state and clear session tracking variables.
-         this.updateManagerState(this.STATE_DISCONNECTED);
+         this.updateManagerState(this.STATE_DISCONNECTED); // Set state *before* UI updates
          this.displayedPeerId = null;
          this.pendingPeerIdForAction = null;
          this.identifier = null; // Clear registered identifier.
 
          // Update UI status and show the registration screen.
-         this.uiController.updateStatus(`Disconnected from server.`);
+         // --- BEGIN REVISED Status Update ---
+         // Use the specific reason for the status update.
+         this.uiController.updateStatus(disconnectReason);
+         // --- END REVISED Status Update ---
          this.uiController.showRegistration();
     }
 
