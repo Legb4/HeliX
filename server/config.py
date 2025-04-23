@@ -12,7 +12,7 @@ HOST = '0.0.0.0'
 
 # The port number the WebSocket server should listen on.
 # This must match the port specified in the client's 'config.js' (webSocketUrl).
-PORT = 5678 # Keep WebSocket port the same for now
+PORT = 5678
 
 # --- SSL Configuration ---
 # Settings related to enabling Secure WebSockets (WSS) using TLS/SSL certificates.
@@ -48,3 +48,13 @@ CONNECTION_WINDOW_SECONDS = 60
 MAX_MESSAGES_PER_CONNECTION = 20
 # Time window in seconds for message rate limiting.
 MESSAGE_WINDOW_SECONDS = 5
+
+# --- Debugging Configuration ---
+
+# Debug Flag for Console Logging.
+# - Set to `True` to enable detailed console logging for development and debugging.
+#   This will output verbose information like raw message contents being relayed.
+# - Set to `False` for production deployments to minimize information leakage
+#   and keep the console cleaner. Essential logs (connections, errors, warnings)
+#   will still be logged regardless of this flag.
+DEBUG = False

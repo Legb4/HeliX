@@ -44,6 +44,15 @@ class Session {
         this.typingIndicatorTimeoutId = null;
         // ---------------------------------
 
+        // --- Payload Size Limits (for incoming Base64 strings) ---
+        // Define maximum acceptable lengths for various Base64 encoded fields received from the network.
+        // These are safety limits to prevent client-side DoS or excessive memory use from malicious payloads.
+        this.MAX_PUBLIC_KEY_LENGTH = 512; // Generous limit for Base64 SPKI P-256 key (~120 bytes raw -> ~160 Base64)
+        this.MAX_IV_LENGTH = 32;          // Generous limit for Base64 IV (12 bytes raw -> 16 Base64)
+        this.MAX_ENCRYPTED_DATA_LENGTH = 1024 * 128; // Limit for Base64 encrypted data (challenge, response, message) - 128KB Base64 (~96KB raw)
+        // ---------------------------------------------------------
+
+        // Log session creation (not wrapped in DEBUG as it's fundamental)
         console.log(`New session created for peer: ${this.peerId}, initial state: ${this.state}`);
     }
 
@@ -54,10 +63,16 @@ class Session {
     updateState(newState) {
         // Avoid logging redundant state updates if the state isn't actually changing.
         if (this.state !== newState) {
-            console.log(`Session [${this.peerId}] State transition: ${this.state} -> ${newState}`);
+            // Log state transitions only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log(`Session [${this.peerId}] State transition: ${this.state} -> ${newState}`);
+            }
             this.state = newState;
         } else {
-            console.log(`Session [${this.peerId}] State update attempted to same state: ${newState}`);
+            // Log attempted update to same state only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log(`Session [${this.peerId}] State update attempted to same state: ${newState}`);
+            }
         }
     }
 
@@ -67,7 +82,10 @@ class Session {
      * Called when a session ends, is denied, times out, or encounters a critical error.
      */
     resetState() {
-         console.log(`Resetting state for session [${this.peerId}]`);
+         // Log reset attempt only if DEBUG is enabled.
+         if (config.DEBUG) {
+             console.log(`Resetting state for session [${this.peerId}]`);
+         }
          // Clear any pending timeouts to prevent them from firing after reset.
          if (this.handshakeTimeoutId) { clearTimeout(this.handshakeTimeoutId); this.handshakeTimeoutId = null; }
          if (this.requestTimeoutId) { clearTimeout(this.requestTimeoutId); this.requestTimeoutId = null; }
@@ -96,9 +114,13 @@ class Session {
         // Basic validation: ensure it's a non-null object (CryptoKey).
         if (keyObject && typeof keyObject === 'object') {
             this.peerPublicKey = keyObject;
-            console.log(`Session [${this.peerId}] Stored peer public ECDH key.`);
+            // Log key storage only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log(`Session [${this.peerId}] Stored peer public ECDH key.`);
+            }
             return true;
         } else {
+            // Always log this error.
             console.error(`Session [${this.peerId}] Invalid object provided for peer public key:`, keyObject);
             return false;
         }
@@ -112,6 +134,7 @@ class Session {
      */
     addMessageToHistory(sender, text, type) {
         this.messages.push({ sender, text, type });
+        // No console log here by default, UIController handles display.
     }
 
     // --- Key Derivation Helper ---
@@ -121,24 +144,30 @@ class Session {
      * Updates state upon successful completion.
      * @param {string} successState - The state to transition to upon successful derivation.
      * @returns {Promise<boolean>} True if derivation succeeded, false otherwise.
+     * @throws {Error} Throws specific errors on failure for the caller to handle.
      */
     async _deriveKeysAndHandleBufferedChallenge(successState) {
         if (!this.cryptoModule.privateKey || !this.peerPublicKey) {
+            // Always log this error.
             console.error(`Session [${this.peerId}] Cannot derive keys: Own or peer key missing.`);
-            return false;
+            // Throw error instead of returning false, caller will catch and create action object.
+            throw new Error('Key derivation pre-check failed: Own or peer key missing.');
         }
 
         // Store the promise immediately.
         this.keyDerivationPromise = (async () => {
-            console.log(`Session [${this.peerId}] Deriving shared secret...`);
+            // Log derivation steps only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`Session [${this.peerId}] Deriving shared secret...`);
             const sharedSecretBits = await this.cryptoModule.deriveSharedSecret(this.peerPublicKey);
+            // Throw specific error if secret derivation fails
             if (!sharedSecretBits) throw new Error('Failed to derive shared secret.');
 
-            console.log(`Session [${this.peerId}] Deriving session key...`);
+            if (config.DEBUG) console.log(`Session [${this.peerId}] Deriving session key...`);
             const keyDerived = await this.cryptoModule.deriveSessionKey(sharedSecretBits);
+            // Throw specific error if key derivation fails
             if (!keyDerived) throw new Error('Failed to derive session key.');
 
-            console.log(`Session [${this.peerId}] Key derivation successful.`);
+            if (config.DEBUG) console.log(`Session [${this.peerId}] Key derivation successful.`);
             return true; // Indicate success
         })();
 
@@ -148,31 +177,30 @@ class Session {
 
             // --- Check for and process buffered challenge ---
             if (this.challengeReceived && this.challengeReceived.isBuffered) {
-                console.log(`Session [${this.peerId}] Processing buffered challenge after key derivation.`);
+                if (config.DEBUG) console.log(`Session [${this.peerId}] Processing buffered challenge after key derivation.`);
+                // Note: Size validation for buffered challenge data happened when it was received in _handleKeyConfirmationChallenge
                 const decryptedBuffer = await this.cryptoModule.decryptAES(
                     this.challengeReceived.encryptedData,
                     new Uint8Array(this.challengeReceived.iv)
                 );
+                // Throw specific error if challenge decryption fails
                 if (!decryptedBuffer) {
                     throw new Error('Failed to decrypt buffered challenge.');
                 }
                 this.challengeReceived = decryptedBuffer; // Replace buffer with decrypted data
-                console.log(`Session [${this.peerId}] Buffered challenge decrypted successfully.`);
+                if (config.DEBUG) console.log(`Session [${this.peerId}] Buffered challenge decrypted successfully.`);
                 // If we are the initiator, we now need to send Type 6
-                if (this.state === manager.STATE_KEY_DERIVED_INITIATOR) { // Use the successState passed in
-                     this.updateState(manager.STATE_RECEIVED_CHALLENGE); // Update state again
-                     // We need SessionManager to send Type 6, but this helper returns boolean.
-                     // The caller (_handleAccept or _handlePublicKeyResponse) needs to handle this.
-                     // Let's signal this back via a specific return value or by setting a flag?
-                     // Simpler: The caller will check challengeReceived status after awaiting this promise.
-                }
+                // The caller (_handleAccept or _handlePublicKeyResponse) needs to handle this.
+                // The caller will check challengeReceived status after awaiting this promise.
             }
             return true; // Overall success
         } catch (error) {
+            // Catch errors from derivation or buffered challenge processing.
+            // Always log the error.
             console.error(`Session [${this.peerId}] Key derivation or buffered challenge processing failed:`, error);
             this.keyDerivationPromise = null; // Clear promise on failure
-            // Don't reset here, let the caller handle the reset action
-            return false;
+            // Re-throw the error so the caller can create the appropriate RESET action with reason.
+            throw error;
         }
     }
 
@@ -189,30 +217,41 @@ class Session {
      * @returns {Promise<object>} An action object for the SessionManager (e.g., { action: 'SEND_TYPE_5' }).
      */
     async processMessage(type, payload, manager) {
-        console.log(`Session [${this.peerId}] Processing message type ${type} in state ${this.state}`);
+        // Log processing attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log(`Session [${this.peerId}] Processing message type ${type} in state ${this.state}`);
+        }
 
         // Route based on message type.
-        switch (type) {
-            // Handshake & Session Management Messages
-            case 2: return await this._handleAccept(payload, manager); // Peer accepted our request
-            case 3: return this._handleDeny(payload, manager);         // Peer denied our request
-            case 4: return await this._handlePublicKeyResponse(payload, manager); // Peer sent their public key (response to our accept OR our request)
-            case 5: return await this._handleKeyConfirmationChallenge(payload, manager); // Peer sent encrypted challenge
-            case 6: return await this._handleKeyConfirmationResponse(payload, manager); // Peer sent response to our challenge
-            case 7: return this._handleSessionEstablished(payload, manager); // Peer confirmed session establishment
-            case 9: return this._handleSessionEnd(payload, manager); // Peer initiated session end
+        try {
+            switch (type) {
+                // Handshake & Session Management Messages
+                case 2: return await this._handleAccept(payload, manager); // Peer accepted our request
+                case 3: return this._handleDeny(payload, manager);         // Peer denied our request
+                case 4: return await this._handlePublicKeyResponse(payload, manager); // Peer sent their public key (response to our accept OR our request)
+                case 5: return await this._handleKeyConfirmationChallenge(payload, manager); // Peer sent encrypted challenge
+                case 6: return await this._handleKeyConfirmationResponse(payload, manager); // Peer sent response to our challenge
+                case 7: return this._handleSessionEstablished(payload, manager); // Peer confirmed session establishment
+                case 9: return this._handleSessionEnd(payload, manager); // Peer initiated session end
 
-            // Data Message
-            case 8: return await this._handleEncryptedMessage(payload, manager); // Encrypted chat message
+                // Data Message
+                case 8: return await this._handleEncryptedMessage(payload, manager); // Encrypted chat message
 
-            // Typing Indicators
-            case 10: return this._handleTypingStart(payload, manager); // Peer started typing
-            case 11: return this._handleTypingStop(payload, manager);  // Peer stopped typing
+                // Typing Indicators
+                case 10: return this._handleTypingStart(payload, manager); // Peer started typing
+                case 11: return this._handleTypingStop(payload, manager);  // Peer stopped typing
 
-            default:
-                // Log unhandled message types for debugging.
-                console.warn(`Session [${this.peerId}] Received unhandled message type in processMessage: ${type}`);
-                return { action: 'NONE' }; // No action needed for unknown types.
+                default:
+                    // Always log unhandled message types as a warning.
+                    console.warn(`Session [${this.peerId}] Received unhandled message type in processMessage: ${type}`);
+                    return { action: 'NONE' }; // No action needed for unknown types.
+            }
+        } catch (error) {
+            // Catch unexpected errors within the handler functions themselves.
+            // Always log these errors.
+            console.error(`Session [${this.peerId}] Unexpected error processing message type ${type}:`, error);
+            // Return a generic RESET action with the error message.
+            return { action: 'RESET', reason: `Internal error processing message: ${error.message}` };
         }
     }
 
@@ -228,30 +267,45 @@ class Session {
     async _handleAccept(payload, manager) {
         // This is received by the Initiator
         if (this.state !== manager.STATE_INITIATING_SESSION) {
+             // Always log unexpected state warnings.
              console.warn(`Session [${this.peerId}] Received unexpected Type 2 in state ${this.state}. Ignoring.`);
              return { action: 'NONE' };
         }
         const publicKeyBase64 = payload.publicKey;
-        // Validate payload and import the key.
-        if (!publicKeyBase64) { return { action: 'RESET', reason: 'Invalid Type 2 received (missing key).' }; }
-        const importedKey = await this.cryptoModule.importPublicKeyBase64(publicKeyBase64);
-        if (!importedKey) { return { action: 'RESET', reason: 'Failed to import peer ECDH key.' }; }
-        // Store the imported key.
-        if (!this.setPeerPublicKey(importedKey)) { return { action: 'RESET', reason: 'Failed to store peer ECDH key.' }; }
 
-        // --- Start Key Derivation (Initiator) ---
-        this.updateState(manager.STATE_DERIVING_KEY_INITIATOR); // New state
-        const derivationSuccess = await this._deriveKeysAndHandleBufferedChallenge(manager.STATE_KEY_DERIVED_INITIATOR); // New state
-        if (!derivationSuccess) {
-            return { action: 'RESET', reason: 'Key derivation failed.' };
+        // --- Payload Validation ---
+        if (!publicKeyBase64 || typeof publicKeyBase64 !== 'string') {
+            return { action: 'RESET', reason: 'Handshake Error: Invalid acceptance message received (missing or invalid key).' };
         }
-        // --- End Key Derivation ---
+        // Check key length against defined limit.
+        if (publicKeyBase64.length > this.MAX_PUBLIC_KEY_LENGTH) {
+            return { action: 'RESET', reason: `Handshake Error: Received excessively large public key (>${this.MAX_PUBLIC_KEY_LENGTH} chars).` };
+        }
+        // --- End Validation ---
 
-        // Key derivation started (and potentially completed). Request sending Type 4.
-        // If a buffered challenge was processed, the state might already be RECEIVED_CHALLENGE.
-        // The SessionManager will handle sending Type 6 in that case based on the result of this function.
-        // We still need to send Type 4 regardless.
-        return { action: 'SEND_TYPE_4' };
+        try {
+            // Import the key.
+            const importedKey = await this.cryptoModule.importPublicKeyBase64(publicKeyBase64);
+            if (!importedKey) { throw new Error('Failed to import peer public key.'); } // Throw on failure
+            // Store the imported key.
+            if (!this.setPeerPublicKey(importedKey)) { throw new Error('Failed to store peer public key.'); } // Throw on failure
+
+            // --- Start Key Derivation (Initiator) ---
+            this.updateState(manager.STATE_DERIVING_KEY_INITIATOR); // New state
+            // Await the derivation helper, which now throws on error.
+            await this._deriveKeysAndHandleBufferedChallenge(manager.STATE_KEY_DERIVED_INITIATOR);
+            // --- End Key Derivation ---
+
+            // Key derivation successful. Request sending Type 4.
+            return { action: 'SEND_TYPE_4' };
+
+        } catch (error) {
+            // Catch errors from key import, storage, or derivation.
+            // Always log these errors.
+            console.error(`Session [${this.peerId}] Error handling Type 2 (Accept):`, error);
+            // Return RESET action with a more specific reason.
+            return { action: 'RESET', reason: `Handshake Error: ${error.message}` };
+        }
     }
 
     /**
@@ -262,6 +316,7 @@ class Session {
      */
     _handleDeny(payload, manager) {
         const message = `Session request denied by ${this.peerId}.`;
+        // Log denial (not wrapped in DEBUG as it's a significant event).
         console.log(message);
         // Update state and request SessionManager to show an info message to the user.
         this.updateState(manager.STATE_DENIED);
@@ -278,27 +333,45 @@ class Session {
     async _handlePublicKeyResponse(payload, manager) {
         // This is received by the Responder
         if (this.state !== manager.STATE_AWAITING_CHALLENGE) { // Responder should be waiting for Initiator's key
+             // Always log unexpected state warnings.
              console.warn(`Session [${this.peerId}] Received unexpected Type 4 in state ${this.state}. Ignoring.`);
              return { action: 'NONE' };
         }
         const publicKeyBase64 = payload.publicKey;
-        // Validate payload and import the key.
-        if (!publicKeyBase64) { return { action: 'RESET', reason: 'Invalid Type 4 received (missing key).' }; }
-        const importedKey = await this.cryptoModule.importPublicKeyBase64(publicKeyBase64);
-        if (!importedKey) { return { action: 'RESET', reason: 'Failed to import peer ECDH key.' }; }
-        // Store the imported key.
-        if (!this.setPeerPublicKey(importedKey)) { return { action: 'RESET', reason: 'Failed to store peer ECDH key.' }; }
 
-        // --- Start Key Derivation (Responder) ---
-        this.updateState(manager.STATE_DERIVING_KEY_RESPONDER); // New state
-        const derivationSuccess = await this._deriveKeysAndHandleBufferedChallenge(manager.STATE_RECEIVED_INITIATOR_KEY); // Success state
-        if (!derivationSuccess) {
-            return { action: 'RESET', reason: 'Key derivation failed.' };
+        // --- Payload Validation ---
+        if (!publicKeyBase64 || typeof publicKeyBase64 !== 'string') {
+            return { action: 'RESET', reason: 'Handshake Error: Invalid key response received (missing or invalid key).' };
         }
-        // --- End Key Derivation ---
+        // Check key length against defined limit.
+        if (publicKeyBase64.length > this.MAX_PUBLIC_KEY_LENGTH) {
+            return { action: 'RESET', reason: `Handshake Error: Received excessively large public key (>${this.MAX_PUBLIC_KEY_LENGTH} chars).` };
+        }
+        // --- End Validation ---
 
-        // Key derivation successful. Request sending Type 5 (Challenge).
-        return { action: 'SEND_TYPE_5' };
+        try {
+            // Import the key.
+            const importedKey = await this.cryptoModule.importPublicKeyBase64(publicKeyBase64);
+            if (!importedKey) { throw new Error('Failed to import peer public key.'); } // Throw on failure
+            // Store the imported key.
+            if (!this.setPeerPublicKey(importedKey)) { throw new Error('Failed to store peer public key.'); } // Throw on failure
+
+            // --- Start Key Derivation (Responder) ---
+            this.updateState(manager.STATE_DERIVING_KEY_RESPONDER); // New state
+            // Await the derivation helper, which now throws on error.
+            await this._deriveKeysAndHandleBufferedChallenge(manager.STATE_RECEIVED_INITIATOR_KEY);
+            // --- End Key Derivation ---
+
+            // Key derivation successful. Request sending Type 5 (Challenge).
+            return { action: 'SEND_TYPE_5' };
+
+        } catch (error) {
+            // Catch errors from key import, storage, or derivation.
+            // Always log these errors.
+            console.error(`Session [${this.peerId}] Error handling Type 4 (Key Response):`, error);
+            // Return RESET action with a more specific reason.
+            return { action: 'RESET', reason: `Handshake Error: ${error.message}` };
+        }
     }
 
 
@@ -314,14 +387,26 @@ class Session {
         // This is received by the Initiator
         const ivBase64 = payload.iv;
         const encryptedChallengeBase64 = payload.encryptedChallenge;
-        // Validate payload.
-        if (!ivBase64 || !encryptedChallengeBase64) { return { action: 'RESET', reason: 'Invalid Type 5 received (missing data).' }; }
+
+        // --- Payload Validation ---
+        if (!ivBase64 || typeof ivBase64 !== 'string' || !encryptedChallengeBase64 || typeof encryptedChallengeBase64 !== 'string') {
+            return { action: 'RESET', reason: 'Handshake Error: Invalid challenge message received (missing or invalid data).' };
+        }
+        // Check lengths against defined limits.
+        if (ivBase64.length > this.MAX_IV_LENGTH) {
+            return { action: 'RESET', reason: `Handshake Error: Received excessively large IV (>${this.MAX_IV_LENGTH} chars).` };
+        }
+        if (encryptedChallengeBase64.length > this.MAX_ENCRYPTED_DATA_LENGTH) {
+            return { action: 'RESET', reason: `Handshake Error: Received excessively large challenge data (>${this.MAX_ENCRYPTED_DATA_LENGTH} chars).` };
+        }
+        // --- End Validation ---
 
         // Check if key derivation is complete or still in progress.
         if (!this.cryptoModule.derivedSessionKey) {
             // Check if derivation has started (promise exists)
             if (this.keyDerivationPromise) {
                 // Key derivation is in progress. Buffer the challenge.
+                // Always log this warning.
                 console.warn(`Session [${this.peerId}] Received Type 5 challenge while key derivation is in progress. Buffering challenge.`);
                 try {
                     this.challengeReceived = {
@@ -332,38 +417,46 @@ class Session {
                     // State remains DERIVING_KEY_INITIATOR
                     return { action: 'NONE' }; // Wait for derivation to complete
                 } catch (e) {
+                     // Always log this error.
                      console.error("Error buffering challenge data:", e);
-                     return { action: 'RESET', reason: 'Failed to buffer challenge data.' };
+                     // Return RESET action with a specific reason.
+                     return { action: 'RESET', reason: 'Handshake Error: Failed to buffer challenge data.' };
                 }
             } else {
                 // Type 5 received but derivation hasn't even started (shouldn't happen after Type 2).
+                // Always log this critical error.
                 console.error(`Session [${this.peerId}] Received Type 5 but key derivation not started! State: ${this.state}`);
-                return { action: 'RESET', reason: 'Internal error: Challenge received before key derivation initiated.' };
+                return { action: 'RESET', reason: 'Internal Error: Challenge received before key derivation initiated.' };
             }
         }
 
         // --- Key is derived, proceed with decryption ---
-        console.log(`Session [${this.peerId}] Session key is derived. Processing received challenge (Type 5).`);
+        if (config.DEBUG) console.log(`Session [${this.peerId}] Session key is derived. Processing received challenge (Type 5).`);
         try {
             const iv = this.cryptoModule.base64ToArrayBuffer(ivBase64);
             const encryptedChallengeBuffer = this.cryptoModule.base64ToArrayBuffer(encryptedChallengeBase64);
 
             // Decrypt using the derived AES session key.
             const decryptedChallengeBuffer = await this.cryptoModule.decryptAES(encryptedChallengeBuffer, new Uint8Array(iv));
-            if (!decryptedChallengeBuffer) { return { action: 'RESET', reason: 'Failed to decrypt challenge (security check failed).' }; }
+            // Throw specific error if decryption fails
+            if (!decryptedChallengeBuffer) { throw new Error('Failed to decrypt challenge (security check failed).'); }
 
             // Store the decrypted challenge data (as ArrayBuffer).
             this.challengeReceived = decryptedChallengeBuffer;
-            // Log decrypted text for debugging (remove in production if sensitive).
-            const challengeText = this.cryptoModule.decodeText(decryptedChallengeBuffer);
-            console.log(`Challenge decrypted successfully. Received text (for debug): "${challengeText}"`);
+            // Log decrypted text only if DEBUG is enabled.
+            if (config.DEBUG) {
+                const challengeText = this.cryptoModule.decodeText(decryptedChallengeBuffer);
+                console.log(`Challenge decrypted successfully. Received text (for debug): "${challengeText}"`);
+            }
 
             // Update state and request SessionManager to send back the encrypted response (Type 6).
             this.updateState(manager.STATE_RECEIVED_CHALLENGE);
             return { action: 'SEND_TYPE_6', challengeData: this.challengeReceived };
         } catch (error) {
-            console.error(`Session [${this.peerId}] Error handling Type 5:`, error);
-            return { action: 'RESET', reason: 'Error processing challenge.' };
+            // Always log errors during challenge handling.
+            console.error(`Session [${this.peerId}] Error handling Type 5 (Challenge):`, error);
+            // Return RESET action with a specific reason.
+            return { action: 'RESET', reason: `Handshake Error: ${error.message}` };
         }
     }
 
@@ -379,14 +472,27 @@ class Session {
         // This is received by the Responder
         const ivBase64 = payload.iv;
         const encryptedResponseBase64 = payload.encryptedResponse;
-        // Validate payload and ensure we actually sent a challenge.
-        if (!ivBase64 || !encryptedResponseBase64) { return { action: 'RESET', reason: 'Invalid Type 6 received (missing data).' }; }
-        if (!this.challengeSent) { return { action: 'RESET', reason: 'Received unexpected Type 6.' }; }
+
+        // --- Payload Validation ---
+        if (!ivBase64 || typeof ivBase64 !== 'string' || !encryptedResponseBase64 || typeof encryptedResponseBase64 !== 'string') {
+            return { action: 'RESET', reason: 'Handshake Error: Invalid challenge response received (missing or invalid data).' };
+        }
+        // Check lengths against defined limits.
+        if (ivBase64.length > this.MAX_IV_LENGTH) {
+            return { action: 'RESET', reason: `Handshake Error: Received excessively large IV (>${this.MAX_IV_LENGTH} chars).` };
+        }
+        if (encryptedResponseBase64.length > this.MAX_ENCRYPTED_DATA_LENGTH) {
+            return { action: 'RESET', reason: `Handshake Error: Received excessively large response data (>${this.MAX_ENCRYPTED_DATA_LENGTH} chars).` };
+        }
+        // --- End Validation ---
+
+        // Ensure we actually sent a challenge.
+        if (!this.challengeSent) { return { action: 'RESET', reason: 'Handshake Error: Received unexpected challenge response.' }; }
         // Ensure session key is derived.
         if (!this.cryptoModule.derivedSessionKey) {
-             // Should not happen if Type 5 was sent correctly after key derivation.
+             // Always log this critical error.
              console.error(`Session [${this.peerId}] Received Type 6 but session key not derived! State: ${this.state}`);
-             return { action: 'RESET', reason: 'Internal error: Session key missing when receiving challenge response.' };
+             return { action: 'RESET', reason: 'Internal Error: Session key missing when receiving challenge response.' };
         }
 
         try {
@@ -395,7 +501,8 @@ class Session {
 
             // Decrypt using the derived AES session key.
             const decryptedResponseBuffer = await this.cryptoModule.decryptAES(encryptedResponseBuffer, new Uint8Array(iv));
-            if (!decryptedResponseBuffer) { return { action: 'RESET', reason: 'Failed to decrypt challenge response (security check failed).' }; }
+            // Throw specific error if decryption fails
+            if (!decryptedResponseBuffer) { throw new Error('Failed to decrypt challenge response (security check failed).'); }
 
             // --- Verify Challenge Match ---
             let match = decryptedResponseBuffer.byteLength === this.challengeSent.byteLength;
@@ -409,16 +516,20 @@ class Session {
                     }
                 }
             }
-            if (!match) { return { action: 'RESET', reason: 'Challenge response verification failed!' }; }
+            // Throw specific error if verification fails
+            if (!match) { throw new Error('Challenge response verification failed!'); }
             // --- Verification Success ---
-            console.log("Challenge response verified successfully!");
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) console.log("Challenge response verified successfully!");
             this.challengeSent = null; // Clear the sent challenge.
             // Update state and request SessionManager send the final confirmation (Type 7).
             this.updateState(manager.STATE_HANDSHAKE_COMPLETE); // Responder considers handshake complete here
             return { action: 'SEND_TYPE_7' };
         } catch (error) {
-             console.error(`Session [${this.peerId}] Error handling Type 6:`, error);
-             return { action: 'RESET', reason: 'Error processing challenge response.' };
+             // Always log errors during response handling.
+             console.error(`Session [${this.peerId}] Error handling Type 6 (Response):`, error);
+             // Return RESET action with a specific reason.
+             return { action: 'RESET', reason: `Handshake Error: ${error.message}` };
         }
     }
 
@@ -433,6 +544,7 @@ class Session {
         // This is received by the Initiator
         // Ensure we were expecting this state transition (after sending Type 6)
         if (this.state !== manager.STATE_AWAITING_FINAL_CONFIRMATION && this.state !== manager.STATE_RECEIVED_CHALLENGE) {
+             // Always log unexpected state warnings.
              console.warn(`Session [${this.peerId}] Received Type 7 in unexpected state ${this.state}. Proceeding to ACTIVE.`);
         }
         // Update state to active.
@@ -455,17 +567,31 @@ class Session {
 
         // Ignore messages if the session isn't fully active.
         if (this.state !== manager.STATE_ACTIVE_SESSION) {
+             // Always log this warning.
              console.warn(`Session [${this.peerId}] Received Type 8 message in non-active state (${this.state}). Ignoring.`);
              return { action: 'NONE' };
         }
-        // Validate payload structure.
-        if (!ivBase64 || !encryptedDataBase64) {
+
+        // --- Payload Validation ---
+        if (!ivBase64 || typeof ivBase64 !== 'string' || !encryptedDataBase64 || typeof encryptedDataBase64 !== 'string') {
+            // Return action to display system message about malformed data
             return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Received malformed message from ${this.peerId}.` };
         }
+        // Check lengths against defined limits.
+        if (ivBase64.length > this.MAX_IV_LENGTH) {
+            return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Received message with excessively large IV from ${this.peerId}.` };
+        }
+        if (encryptedDataBase64.length > this.MAX_ENCRYPTED_DATA_LENGTH) {
+            return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Received excessively large message data from ${this.peerId}.` };
+        }
+        // --- End Validation ---
+
         // Ensure session key is derived.
         if (!this.cryptoModule.derivedSessionKey) {
+             // Always log this critical error.
              console.error(`Session [${this.peerId}] Received Type 8 message but session key is not derived! State: ${this.state}`);
-             return { action: 'RESET', reason: 'Internal error: Session key missing for active session.' };
+             // Return RESET action for critical key error
+             return { action: 'RESET', reason: 'Internal Error: Session key missing for active session.' };
         }
 
         try {
@@ -475,21 +601,28 @@ class Session {
 
             // 2. Decrypt the message data using the derived AES session key and IV.
             const decryptedDataBuffer = await this.cryptoModule.decryptAES(encryptedDataBuffer, new Uint8Array(iv));
-            if (!decryptedDataBuffer) { return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Failed to decrypt message from ${this.peerId}.` }; }
+            // If decryption fails, return action to display system message
+            if (!decryptedDataBuffer) {
+                return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Failed to decrypt message from ${this.peerId}. (Possible key mismatch or data corruption)` };
+            }
 
             // 3. Decode the decrypted buffer (UTF-8) into a string.
             const messageText = this.cryptoModule.decodeText(decryptedDataBuffer);
 
-            // Log and add to history.
-            console.log(`%c[${this.peerId}]: ${messageText}`, "color: purple;"); // Style console output
+            // Log received message only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log(`%c[${this.peerId}]: ${messageText}`, "color: purple;"); // Style console output
+            }
             this.addMessageToHistory(this.peerId, messageText, 'peer');
 
             // Request SessionManager display the message.
             return { action: 'DISPLAY_MESSAGE', sender: this.peerId, text: messageText, msgType: 'peer' };
 
         } catch (error) {
+            // Always log errors during message handling.
             console.error(`Error handling encrypted message from ${this.peerId}:`, error);
-            return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Error decrypting message from ${this.peerId}.` };
+            // Return action to display system message for other errors during processing
+            return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Error processing message from ${this.peerId}: ${error.message}` };
         }
     }
 
@@ -501,8 +634,10 @@ class Session {
      */
     _handleSessionEnd(payload, manager) {
         const message = `Session ended by ${this.peerId}.`;
+        // Log session end (not wrapped in DEBUG as it's significant).
         console.log(message);
         // Request SessionManager reset this session and notify the user.
+        // notifyUser=true ensures the info pane is shown.
         return { action: 'RESET', reason: message, notifyUser: true };
     }
 
@@ -516,10 +651,12 @@ class Session {
     _handleTypingStart(payload, manager) {
         // Only process typing indicators if the session is active.
         if (this.state !== manager.STATE_ACTIVE_SESSION) {
+            // Always log this warning.
             console.warn(`Session [${this.peerId}] Ignoring Type 10 in state ${this.state}`);
             return { action: 'NONE' };
         }
-        console.log(`Session [${this.peerId}] Peer started typing.`);
+        // Log typing start only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${this.peerId}] Peer started typing.`);
         this.peerIsTyping = true; // Mark peer as typing.
         // Request SessionManager show the typing indicator (it will handle the timeout).
         return { action: 'SHOW_TYPING' };
@@ -534,10 +671,12 @@ class Session {
     _handleTypingStop(payload, manager) {
         // Only process typing indicators if the session is active.
         if (this.state !== manager.STATE_ACTIVE_SESSION) {
+            // Always log this warning.
             console.warn(`Session [${this.peerId}] Ignoring Type 11 in state ${this.state}`);
             return { action: 'NONE' };
         }
-        console.log(`Session [${this.peerId}] Peer stopped typing.`);
+        // Log typing stop only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${this.peerId}] Peer stopped typing.`);
         this.peerIsTyping = false; // Mark peer as not typing.
         // Request SessionManager hide the typing indicator (it will clear the timeout).
         return { action: 'HIDE_TYPING' };

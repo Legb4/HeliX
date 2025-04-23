@@ -2,14 +2,19 @@
 # helix_manager.py - Main control script for HeliX Chat
 #
 # This script provides a command-line interface to manage the HeliX chat application:
-# - Checks for the required 'websockets' library and offers installation.
+# - Checks for required Python packages listed in server/requirements.txt and offers installation.
 # - Provides a menu option to manage TLS certificates using 'mkcert':
 #   - Checks for 'mkcert' utility (in PATH or ./certs/mkcert.exe on Windows).
 #   - Offers to install the mkcert CA for browser trust.
 #   - Generates/overwrites local TLS certificates (cert.pem, key.pem) for localhost/127.0.0.1.
 #   - Offers to back up existing certificates before overwriting.
-# - Allows viewing and modifying configuration settings (WSS Host/Port, HTTPS Host/Port).
-# - Saves WSS and HTTPS configuration changes persistently to server/config.py.
+# - Allows viewing and modifying configuration settings:
+#   - WSS Host/Port (Saved to server/config.py)
+#   - HTTPS Host/Port (Manager session only)
+#   - Server Debug Mode (Saved to server/config.py)
+#   - Client Debug Mode (Saved to client/js/config.js)
+# - Saves WSS config (HOST, PORT, DEBUG) persistently to server/config.py before starting.
+# - Saves Client config (DEBUG) persistently to client/js/config.js before starting.
 # - Starts both the WebSocket Secure (WSS) server (as a subprocess) and
 #   an integrated HTTPS server (in a separate thread) to serve client files.
 #   (Requires certificates to exist before starting).
@@ -35,8 +40,12 @@ from functools import partial # Used for creating the HTTPS request handler with
 # --- Constants ---
 # Define file paths relative to the location of this script for portability.
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) # Absolute path to script's directory.
-# CONFIG_FILE_PATH replaces WSS_CONFIG_PATH as it now handles more settings.
+# Path to the WSS server configuration file.
 CONFIG_FILE_PATH = os.path.join(SCRIPT_DIR, 'server', 'config.py') # Path to server config file.
+# Path to the client configuration file.
+CLIENT_CONFIG_FILE_PATH = os.path.join(SCRIPT_DIR, 'client', 'js', 'config.js')
+# Path to the server requirements file.
+REQUIREMENTS_FILE_PATH = os.path.join(SCRIPT_DIR, 'server', 'requirements.txt')
 HTTPS_CLIENT_DIR = os.path.join(SCRIPT_DIR, 'client') # Path to the client files directory.
 CERT_DIR = os.path.join(SCRIPT_DIR, 'certs') # Path to the SSL certificates directory.
 CERT_FILE = os.path.join(CERT_DIR, 'cert.pem') # Expected SSL certificate filename.
@@ -71,50 +80,97 @@ https_logger.addHandler(https_file_handler)
 https_logger.propagate = False
 
 # --- Dependency Management ---
-def check_or_install_websockets():
+def parse_package_name(requirement_line):
     """
-    Checks if the 'websockets' library is installed using importlib.
-    If not found, it prompts the user for confirmation and attempts to install
-    it using pip associated with the current Python interpreter. Exits if
-    installation is declined or fails.
+    Parses a requirement line (e.g., 'websockets==11.0.3', 'requests>=2.0')
+    to extract the base package name ('websockets', 'requests').
+    Handles common version specifiers.
+
+    Args:
+        requirement_line (str): A line from requirements.txt.
+
+    Returns:
+        str or None: The extracted package name, or None if parsing fails or line is invalid.
     """
-    print("Checking for 'websockets' library...")
-    # Use find_spec for a lightweight check without importing the module.
-    spec = importlib.util.find_spec("websockets")
-    if spec is None:
-        # Library not found.
-        print("'websockets' library not found.")
-        confirm = input("Attempt to install it using pip? (y/n): ").lower().strip()
-        if confirm == 'y':
-            print("Installing 'websockets'...")
-            try:
-                # Run pip as a subprocess using the current Python interpreter's path.
-                subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "websockets"],
-                    check=True,        # Raise error if pip fails
-                    capture_output=True,# Hide pip output unless error
-                    text=True          # Decode output as text
-                )
-                print("'websockets' installed successfully.")
-            except subprocess.CalledProcessError as e:
-                # Handle pip installation errors.
-                print(f"Error installing 'websockets': {e}")
-                print("--- PIP Error Output ---")
-                print(e.stderr) # Print captured stderr
-                print("----------------------")
-                print("Please install 'websockets' manually (e.g., 'pip install websockets') and restart.")
-                sys.exit(1) # Exit manager script.
-            except FileNotFoundError:
-                # Handle error if 'pip' itself isn't found.
-                print("Error: 'pip' command not found. Is Python installed correctly and in your PATH?")
+    line = requirement_line.strip()
+    # Ignore empty lines and comments
+    if not line or line.startswith('#'):
+        return None
+    # Find the first occurrence of a version specifier or end of string
+    match = re.match(r"^[a-zA-Z0-9._-]+", line)
+    if match:
+        return match.group(0)
+    return None # Return None if no valid package name start is found
+
+def check_dependencies():
+    """
+    Checks if Python packages listed in server/requirements.txt are installed.
+    If any are missing, prompts the user to install them using pip.
+    Exits if installation is declined or fails.
+    """
+    print(f"Checking dependencies listed in {REQUIREMENTS_FILE_PATH}...")
+    missing_packages = []
+    try:
+        # Read the requirements file.
+        with open(REQUIREMENTS_FILE_PATH, 'r', encoding='utf-8') as f:
+            requirements = f.readlines()
+
+        # Check each requirement.
+        for line in requirements:
+            package_name = parse_package_name(line)
+            if package_name:
+                # Use find_spec for a lightweight check without importing.
+                spec = importlib.util.find_spec(package_name)
+                if spec is None:
+                    print(f"  - Package '{package_name}' not found.")
+                    missing_packages.append(package_name)
+                # else: # Removed the debug logging for found packages here
+                    # print(f"  - Package '{package_name}' found.") # Removed this line
+
+        # If packages are missing, prompt for installation.
+        if missing_packages:
+            print("\nSome required packages are missing.")
+            package_list = ", ".join(missing_packages)
+            confirm = input(f"Attempt to install missing packages ({package_list}) using pip? (y/n): ").lower().strip()
+            if confirm == 'y':
+                print(f"Installing packages from {REQUIREMENTS_FILE_PATH}...")
+                try:
+                    # Run pip install -r using the current Python interpreter.
+                    subprocess.run(
+                        [sys.executable, "-m", "pip", "install", "-r", REQUIREMENTS_FILE_PATH],
+                        check=True,        # Raise error if pip fails
+                        capture_output=True,# Hide pip output unless error
+                        text=True          # Decode output as text
+                    )
+                    print("Packages installed successfully.")
+                except subprocess.CalledProcessError as e:
+                    # Handle pip installation errors.
+                    print(f"Error installing packages: {e}")
+                    print("--- PIP Error Output ---")
+                    print(e.stderr) # Print captured stderr
+                    print("----------------------")
+                    print(f"Please install packages manually (e.g., 'pip install -r {REQUIREMENTS_FILE_PATH}') and restart.")
+                    sys.exit(1) # Exit manager script.
+                except FileNotFoundError:
+                    # Handle error if 'pip' itself isn't found.
+                    print("Error: 'pip' command not found. Is Python installed correctly and in your PATH?")
+                    sys.exit(1) # Exit manager script.
+            else:
+                # User declined installation.
+                print("Installation declined. Please install required packages manually and restart.")
                 sys.exit(1) # Exit manager script.
         else:
-            # User declined installation.
-            print("Installation declined. Please install 'websockets' manually and restart.")
-            sys.exit(1) # Exit manager script.
-    else:
-        # Library already installed.
-        print("'websockets' library found.")
+            # All packages found.
+            print("All required packages found.")
+
+    except FileNotFoundError:
+        print(f"Error: {REQUIREMENTS_FILE_PATH} not found. Cannot check dependencies.")
+        print("Please ensure the requirements file exists or install dependencies manually.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"An unexpected error occurred during dependency check: {e}")
+        sys.exit(1)
+
 
 # --- Certificate Generation ---
 def generate_certificates():
@@ -217,113 +273,233 @@ def generate_certificates():
 # --- Configuration Management ---
 def read_config():
     """
-    Reads WSS (HOST, PORT) and HTTPS (HTTPS_HOST, HTTPS_PORT) settings
-    from the server/config.py file using regular expressions.
-    Sets default values internally if the config file is missing or specific
-    settings are not found within the file.
+    Reads WSS settings (HOST, PORT, DEBUG) from server/config.py and
+    Client DEBUG setting from client/js/config.js using regex.
+    Sets default values internally if files or settings are not found.
 
     Returns:
         dict: A dictionary containing the configuration settings:
-              {'wss_host', 'wss_port', 'https_host', 'https_port'}.
-              Uses defaults if the config file is missing or values aren't found.
+              {'wss_host', 'wss_port', 'https_host', 'https_port',
+               'server_debug', 'client_debug'}.
     """
     # Initialize settings with default values.
     settings = {
         'wss_host': '0.0.0.0',
         'wss_port': 5678,
-        'https_host': '0.0.0.0',
-        'https_port': 8888
+        'https_host': '0.0.0.0', # Default HTTPS host (not read from file)
+        'https_port': 8888,     # Default HTTPS port (not read from file)
+        'server_debug': False,  # Default server debug mode
+        'client_debug': False   # Default client debug mode
     }
-    config_file_path = CONFIG_FILE_PATH
+    server_config_path = CONFIG_FILE_PATH
+    client_config_path = CLIENT_CONFIG_FILE_PATH
 
+    # --- Read Server Config (server/config.py) ---
     try:
-        print(f"Reading configuration from: {config_file_path}")
-        with open(config_file_path, 'r', encoding='utf-8') as f:
+        # print(f"Reading WSS configuration from: {server_config_path}") # Silent read
+        with open(server_config_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-            # --- WSS Settings Parsing ---
+            # WSS Host
             wss_host_match = re.search(r"^HOST\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
-            wss_port_match = re.search(r"^PORT\s*=\s*(\d+)", content, re.MULTILINE)
-
             if wss_host_match: settings['wss_host'] = wss_host_match.group(1)
-            else: print(f"Warning: Could not find WSS HOST setting in {config_file_path}, using default '{settings['wss_host']}'.")
+            else: print(f"Warning: Could not find WSS HOST setting in {server_config_path}, using default '{settings['wss_host']}'.")
 
+            # WSS Port
+            wss_port_match = re.search(r"^PORT\s*=\s*(\d+)", content, re.MULTILINE)
             if wss_port_match: settings['wss_port'] = int(wss_port_match.group(1))
-            else: print(f"Warning: Could not find WSS PORT setting in {config_file_path}, using default {settings['wss_port']}.")
+            else: print(f"Warning: Could not find WSS PORT setting in {server_config_path}, using default {settings['wss_port']}.")
 
-            # --- HTTPS Settings Parsing ---
-            https_host_match = re.search(r"^HOST\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
+            # Server Debug
+            server_debug_match = re.search(r"^DEBUG\s*=\s*(True|False)", content, re.MULTILINE)
+            if server_debug_match:
+                # Convert Python boolean string to actual boolean
+                settings['server_debug'] = server_debug_match.group(1) == 'True'
+            else: print(f"Warning: Could not find DEBUG setting in {server_config_path}, using default {settings['server_debug']}.")
 
-            if https_host_match: settings['https_host'] = https_host_match.group(1)
-            else: print(f"Warning: Could not find HTTPS_HOST setting in {config_file_path}, using default '{settings['https_host']}'.")
+    except FileNotFoundError: print(f"Warning: {server_config_path} not found. Using default settings for WSS.")
+    except Exception as e: print(f"Warning: Error reading {server_config_path}: {e}. Using default settings for WSS.")
 
-    except FileNotFoundError: print(f"Warning: {config_file_path} not found. Using default settings for WSS and HTTPS.")
-    except Exception as e: print(f"Warning: Error reading {config_file_path}: {e}. Using default settings.")
+    # --- Read Client Config (client/js/config.js) ---
+    try:
+        # print(f"Reading Client configuration from: {client_config_path}") # Silent read
+        with open(client_config_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+            # Client Debug (Look for 'DEBUG: true' or 'DEBUG: false')
+            # Allow for optional whitespace and comma
+            client_debug_match = re.search(r"^\s*DEBUG:\s*(true|false)\s*,?", content, re.MULTILINE | re.IGNORECASE)
+            if client_debug_match:
+                # Convert JS boolean string to actual boolean
+                settings['client_debug'] = client_debug_match.group(1).lower() == 'true'
+            else: print(f"Warning: Could not find DEBUG setting in {client_config_path}, using default {settings['client_debug']}.")
+
+    except FileNotFoundError: print(f"Warning: {client_config_path} not found. Using default setting for Client DEBUG.")
+    except Exception as e: print(f"Warning: Error reading {client_config_path}: {e}. Using default setting for Client DEBUG.")
+
 
     print("Initial settings loaded.")
     return settings
 
 def write_config(settings):
     """
-    Writes the WSS (HOST, PORT) and HTTPS (HTTPS_HOST, HTTPS_PORT) settings
-    back to the server/config.py file.
+    Writes the WSS settings (HOST, PORT, DEBUG) back to the server/config.py file silently.
     Reads existing file, modifies relevant lines, preserves others, and overwrites.
     Appends settings if not found. Creates file if it doesn't exist.
+    Uses repr() for string/boolean values to ensure proper Python syntax.
+    Does NOT write HTTPS settings or Client DEBUG settings to this file.
 
     Args:
-        settings (dict): Dictionary with 'wss_host', 'wss_port', 'https_host', 'https_port'.
+        settings (dict): Dictionary containing at least 'wss_host', 'wss_port', 'server_debug'.
+                         Other keys are ignored here.
 
     Returns:
         bool: True if writing was successful, False otherwise.
     """
     config_file_path = CONFIG_FILE_PATH
     try:
-        print(f"Attempting to update configuration in: {config_file_path}")
+        # print(f"Attempting to update Server configuration in: {config_file_path}") # Silent write
         lines = []
         try:
+            # Read existing lines from the config file.
             with open(config_file_path, 'r', encoding='utf-8') as f: lines = f.readlines()
-        except FileNotFoundError: print(f"Info: {config_file_path} not found. Creating new file.")
+        except FileNotFoundError: pass # Silently proceed if file not found
 
-        new_lines = []
-        updated_flags = {'wss_host': False, 'wss_port': False, 'https_host': False, 'https_port': False}
+        new_lines = [] # List to hold the modified lines.
+        # Flags to track if WSS settings were found and updated.
+        updated_flags = {'wss_host': False, 'wss_port': False, 'server_debug': False}
+
+        # Define regex patterns and corresponding setting keys and format strings for WSS/Server Debug.
+        # Use repr() for string and boolean values.
         setting_patterns = {
-            re.compile(r"^HOST\s*="): ('wss_host', "HOST = '{value}'\n"),
+            re.compile(r"^HOST\s*="): ('wss_host', "HOST = {value}\n"),
             re.compile(r"^PORT\s*="): ('wss_port', "PORT = {value}\n"),
-            re.compile(r"^HTTPS_HOST\s*="): ('https_host', "HTTPS_HOST = '{value}'\n"),
-            re.compile(r"^HTTPS_PORT\s*="): ('https_port', "HTTPS_PORT = {value}\n")
+            re.compile(r"^DEBUG\s*="): ('server_debug', "DEBUG = {value}\n"), # Match DEBUG = True/False
         }
 
+        # Iterate through the existing lines of the config file.
         for line in lines:
             line_updated = False
+            # Check if the current line matches any of the setting patterns.
             for pattern, (key, format_str) in setting_patterns.items():
+                # If a pattern matches and this setting hasn't been updated yet...
                 if pattern.match(line) and not updated_flags[key]:
-                    new_lines.append(format_str.format(value=settings[key]))
+                    # Format the new value. Use repr() for strings and booleans.
+                    value_to_write = repr(settings[key]) if isinstance(settings[key], (str, bool)) else settings[key]
+                    # Append the updated line to the new_lines list.
+                    new_lines.append(format_str.format(value=value_to_write))
+                    # Mark this setting as updated and break the inner loop.
                     updated_flags[key], line_updated = True, True
                     break
+            # If the line didn't match any setting pattern, append it unchanged.
             if not line_updated: new_lines.append(line)
 
+        # Check for any settings that were not found in the existing file.
         appended_header = False
         for pattern, (key, format_str) in setting_patterns.items():
             if not updated_flags[key]:
+                # Add a header comment if this is the first setting being appended.
                 if not appended_header:
+                    # Ensure there's a newline before the header if needed.
                     if new_lines and not new_lines[-1].endswith('\n'): new_lines.append('\n')
                     new_lines.append("\n# --- Settings added/updated by helix_manager ---\n")
                     appended_header = True
-                print(f"Warning: {key.upper()} line not found in config, appending.")
-                new_lines.append(format_str.format(value=settings[key]))
+                # print(f"Warning: {key.upper()} line not found in config, appending.") # Silent write
+                # Format the value using repr() for strings/booleans.
+                value_to_write = repr(settings[key]) if isinstance(settings[key], (str, bool)) else settings[key]
+                # Append the new setting line.
+                new_lines.append(format_str.format(value=value_to_write))
 
+        # Write the potentially modified lines back to the config file, overwriting it.
         with open(config_file_path, 'w', encoding='utf-8') as f: f.writelines(new_lines)
-        print(f"Configuration updated successfully in {config_file_path}.")
+        # print(f"Server Configuration updated successfully in {config_file_path}.") # Silent write
         return True
     except Exception as e:
-        print(f"Error writing configuration to {config_file_path}: {e}")
+        # Handle any errors during file reading or writing.
+        print(f"Error writing Server configuration to {config_file_path}: {e}")
         return False
 
-# Note: update_client_config and revert_client_config functions removed as they were part of the tunnel feature.
+def write_client_config(settings):
+    """
+    Writes the Client DEBUG setting back to the client/js/config.js file silently.
+    Reads existing file, modifies the relevant line, preserves others, and overwrites.
+    Appends the setting if not found. Creates file if it doesn't exist.
+
+    Args:
+        settings (dict): Dictionary containing at least 'client_debug'.
+
+    Returns:
+        bool: True if writing was successful, False otherwise.
+    """
+    config_file_path = CLIENT_CONFIG_FILE_PATH
+    try:
+        # print(f"Attempting to update Client configuration in: {config_file_path}") # Silent write
+        lines = []
+        try:
+            # Read existing lines from the config file.
+            with open(config_file_path, 'r', encoding='utf-8') as f: lines = f.readlines()
+        except FileNotFoundError: pass # Silently proceed if file not found
+
+        new_lines = [] # List to hold the modified lines.
+        updated_flag = False # Flag to track if the setting was updated.
+        # Regex to find the DEBUG line, allowing for whitespace and optional comma
+        debug_pattern = re.compile(r"^\s*DEBUG:\s*(true|false)\s*,?", re.IGNORECASE)
+        # Format string for the new line (using lowercase js boolean)
+        # Preserve indentation and original comment structure if possible
+        debug_format_str = "    DEBUG: {value}, // Default to false for production\n" # Assuming comma was there
+
+        # Iterate through the existing lines.
+        for line in lines:
+            match = debug_pattern.match(line)
+            # If the line matches the DEBUG pattern and we haven't updated it yet...
+            if match and not updated_flag:
+                # Format the new value (lowercase 'true' or 'false').
+                value_to_write = str(settings['client_debug']).lower()
+                # Try to preserve original indentation and comment if possible
+                leading_whitespace = line[:match.start(1) - len("DEBUG: ")] # Capture leading space
+                trailing_comment = ""
+                comment_match = re.search(r"//.*$", line)
+                if comment_match:
+                    trailing_comment = comment_match.group(0)
+                # Construct the new line
+                new_line_content = f"DEBUG: {value_to_write}," # Assume comma
+                new_line = f"{leading_whitespace}{new_line_content:<{len(match.group(0))}} {trailing_comment}\n".rstrip() + "\n" # Pad and add comment
+                # Fallback format if padding/comment logic fails
+                if not new_line.strip().startswith("DEBUG:"):
+                     new_line = debug_format_str.format(value=value_to_write)
+
+                new_lines.append(new_line)
+                updated_flag = True # Mark as updated.
+            else:
+                # Append the line unchanged.
+                new_lines.append(line)
+
+        # If the DEBUG line was not found, append it.
+        if not updated_flag:
+            # print(f"Warning: DEBUG line not found in {config_file_path}, appending.") # Silent write
+            # Ensure there's a newline before appending if needed.
+            if new_lines and not new_lines[-1].endswith('\n'): new_lines.append('\n')
+            # Format the value (lowercase 'true' or 'false').
+            value_to_write = str(settings['client_debug']).lower()
+            # Append the new setting line using the standard format.
+            new_lines.append(debug_format_str.format(value=value_to_write))
+
+        # Write the potentially modified lines back to the config file.
+        with open(config_file_path, 'w', encoding='utf-8') as f: f.writelines(new_lines)
+        # print(f"Client Configuration updated successfully in {config_file_path}.") # Silent write
+        return True
+    except Exception as e:
+        # Handle any errors during file reading or writing.
+        print(f"Error writing Client configuration to {config_file_path}: {e}")
+        return False
+
 
 def config_menu(settings):
     """
-    Displays the main configuration menu.
+    Displays the main configuration menu. Allows modification of WSS, HTTPS,
+    and Debug settings held in the 'settings' dictionary.
+    WSS (HOST, PORT, DEBUG) and Client DEBUG settings are saved persistently
+    when starting the server.
 
     Args:
         settings (dict): The current configuration values.
@@ -333,15 +509,19 @@ def config_menu(settings):
     """
     while True:
         print("\n--- HeliX Configuration & Management ---")
-        print(f"1. WSS Host:    {settings['wss_host']}")
-        print(f"2. WSS Port:    {settings['wss_port']}")
-        print(f"3. HTTPS Host:  {settings['https_host']}")
-        print(f"4. HTTPS Port:  {settings['https_port']}")
+        print(f"1. WSS Host:         {settings['wss_host']} (Saved to server/config.py)")
+        print(f"2. WSS Port:         {settings['wss_port']} (Saved to server/config.py)")
+        print(f"3. HTTPS Host:       {settings['https_host']} (Manager session only)")
+        print(f"4. HTTPS Port:       {settings['https_port']} (Manager session only)")
+        # Display Debug Modes
+        server_debug_status = "ENABLED" if settings['server_debug'] else "DISABLED"
+        client_debug_status = "ENABLED" if settings['client_debug'] else "DISABLED"
+        print(f"5. Server Debug Log: {server_debug_status} (Saved to server/config.py)")
+        print(f"6. Client Debug Log: {client_debug_status} (Saved to client/js/config.js)")
         print("------------------------------------")
-        print("5. Manage TLS Certificates (Check/Generate/Install CA)")
-        print("6. Save Config and Start Servers") # Renamed from "Start Locally"
-        print("7. Start Servers (Use Current Settings without Saving)") # Renamed from "Start Locally"
-        print("8. Exit") # Renumbered Exit option
+        print("7. Manage TLS Certificates (Check/Generate/Install CA)")
+        print("8. Start HTTPS/WSS Servers")
+        print("9. Exit")
         print("------------------------------------")
         choice = input("Enter choice: ").strip()
 
@@ -368,26 +548,35 @@ def config_menu(settings):
                     else: settings['https_port'] = port_int
                 except ValueError: print("Invalid port. Enter a number.")
         elif choice == '5':
+            # Toggle Server Debug Mode
+            settings['server_debug'] = not settings['server_debug']
+            print(f"Server Debug Mode {'ENABLED' if settings['server_debug'] else 'DISABLED'}.")
+        elif choice == '6':
+            # Toggle Client Debug Mode
+            settings['client_debug'] = not settings['client_debug']
+            print(f"Client Debug Mode {'ENABLED' if settings['client_debug'] else 'DISABLED'}.")
+        elif choice == '7': # Manage Certificates
             if generate_certificates(): print("Certificate process completed successfully.")
             else: print("Certificate process failed or aborted.")
             input("Press Enter to return...")
             continue
-        elif choice == '6': # Save Config and Start
+        elif choice == '8': # Start Servers (Save Config First)
             if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
-                print("\nError: Certificate files missing. Use option 5 first.")
+                print("\nError: Certificate files missing. Use option 7 first.")
                 input("Press Enter to return...")
                 continue
-            if write_config(settings): return True # Signal to start servers
-            else: input("Failed to save config. Press Enter to return...")
+            # Attempt to write both server and client configs silently
+            print("Saving configuration...") # Indicate saving is happening
+            server_saved = write_config(settings)
+            client_saved = write_client_config(settings)
+            if server_saved and client_saved:
+                # print("All configurations saved successfully.") # Silent save
+                return True # Signal to start servers
+            else:
+                input("Failed to save one or more configurations. Press Enter to return...")
             continue
-        elif choice == '7': # Start without Saving
-            if not (os.path.exists(CERT_FILE) and os.path.exists(KEY_FILE)):
-                print("\nError: Certificate files missing. Use option 5 first.")
-                input("Press Enter to return...")
-                continue
-            print("Proceeding without saving config...")
-            return True # Signal to start servers
-        elif choice == '8': # Exit
+        # Removed previous option 7 (Start without saving)
+        elif choice == '9': # Exit
             return False # Signal to exit
         else: print("Invalid choice.")
 
@@ -395,7 +584,9 @@ def config_menu(settings):
 class QuietHTTPRequestHandler(http.server.SimpleHTTPRequestHandler):
     """Custom HTTP handler logging to file via https_logger."""
     def __init__(self, *args, directory=None, **kwargs):
+        # Ensure directory is set correctly before calling super().__init__
         if directory is None: directory = os.getcwd()
+        # Use functools.partial to pass the directory to the handler
         super().__init__(*args, directory=directory, **kwargs)
     def log_message(self, format, *args): https_logger.info("%s - %s" % (self.address_string(), format % args))
     def log_error(self, format, *args): https_logger.error("%s - %s" % (self.address_string(), format % args))
@@ -408,6 +599,7 @@ def _start_https_server_thread(host, port, client_dir):
     """Internal helper to start the HTTPS server thread."""
     global https_server, https_thread
     print("\nStarting HTTPS server thread...")
+    # Use functools.partial to create a handler factory that includes the directory
     Handler = partial(QuietHTTPRequestHandler, directory=client_dir)
     try:
         https_server = ThreadingHTTPServer((host, port), Handler)
@@ -416,6 +608,7 @@ def _start_https_server_thread(host, port, client_dir):
         context.load_cert_chain(certfile=CERT_FILE, keyfile=KEY_FILE)
         https_server.socket = context.wrap_socket(https_server.socket, server_side=True)
         print(f"[HTTPS Setup] SSL context loaded and socket wrapped.")
+        # Create the thread targeting the server's serve_forever method
         https_thread = threading.Thread(target=_run_https_server_loop, args=(https_server,), daemon=True)
         https_thread.start()
         print(f"[HTTPS Thread] Serving HTTPS on {host}:{port} from {client_dir}")
@@ -431,27 +624,39 @@ def _start_https_server_thread(host, port, client_dir):
 def _run_https_server_loop(server_instance):
     """Target function for the HTTPS server thread loop."""
     global https_server
-    try: server_instance.serve_forever()
-    except Exception as e: https_logger.exception("Unexpected error in HTTPS serve_forever loop")
+    try:
+        # Call serve_forever on the passed server instance
+        server_instance.serve_forever()
+    except Exception as e:
+        # Log unexpected errors during the serve_forever loop
+        https_logger.exception("Unexpected error in HTTPS serve_forever loop")
     finally:
+        # Cleanup: Ensure server is closed and global reference is cleared
         if server_instance:
-            try: server_instance.server_close()
+            try:
+                server_instance.server_close()
             except Exception: pass # Ignore errors during close
         print("[HTTPS Thread] Server loop stopped.")
         https_logger.info("HTTPS Server loop stopped.")
-        https_server = None
+        https_server = None # Clear the global reference
 
 # --- WSS Server Logging ---
 def log_wss_output(process):
     """Target function for the WSS logging thread."""
     print("[WSS Log Thread] Started.")
     try:
+        # Read stdout line by line from the WSS process.
+        # iter(process.stdout.readline, '') creates an iterator that stops when readline returns an empty string (EOF).
         for line in iter(process.stdout.readline, ''):
+            # Check if the stop event is set (signaling shutdown).
             if stop_event.is_set(): break
-            print(f"[WSS] {line.strip()}", flush=True)
+            # Print the line received from the WSS server, prefixed.
+            print(f"[WSS] {line.strip()}", flush=True) # flush=True ensures immediate output
+        # Check if the loop ended because the process terminated unexpectedly.
         if not stop_event.is_set() and process.poll() is not None:
              print("[WSS Log Thread] WSS process stdout EOF or process terminated.", flush=True)
     except Exception as e:
+        # Log errors during reading, but only if shutdown wasn't requested.
         if not stop_event.is_set(): print(f"[WSS Log Thread] Error reading WSS output: {e}", flush=True)
     finally: print("[WSS Log Thread] Exiting.", flush=True)
 
@@ -461,12 +666,18 @@ def _start_wss_server_process():
     print("Starting WSS server subprocess...")
     wss_script_path = os.path.join(SCRIPT_DIR, 'server', 'main.py')
     try:
+        # Start the server/main.py script using the same Python interpreter.
         wss_process = subprocess.Popen(
             [sys.executable, wss_script_path],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, encoding='utf-8', bufsize=1, cwd=SCRIPT_DIR
+            stdout=subprocess.PIPE, # Capture standard output.
+            stderr=subprocess.STDOUT, # Redirect standard error to standard output.
+            text=True, # Decode output as text using default encoding.
+            encoding='utf-8', # Specify UTF-8 encoding explicitly.
+            bufsize=1, # Line-buffered output.
+            cwd=SCRIPT_DIR # Set working directory to script's directory.
         )
         print(f"WSS server process started (PID: {wss_process.pid}). Output will follow:")
+        # Start a separate thread to read and print the WSS server's output.
         wss_log_thread = threading.Thread(target=log_wss_output, args=(wss_process,), daemon=True)
         wss_log_thread.start()
         return wss_process
@@ -484,7 +695,7 @@ def start_servers(settings): # Renamed from manage_running_servers, simplified
     Manages running servers and handles graceful shutdown.
 
     Args:
-        settings (dict): The current configuration settings.
+        settings (dict): The current configuration settings (includes WSS and HTTPS).
     """
     global wss_process, https_thread, wss_log_thread, https_server, stop_event
 
@@ -494,44 +705,55 @@ def start_servers(settings): # Renamed from manage_running_servers, simplified
 
     servers_started_ok = False
     print("Starting local servers...")
+    # Start the HTTPS server thread first, using settings from the dictionary.
     https_thread = _start_https_server_thread(
         settings['https_host'], settings['https_port'], HTTPS_CLIENT_DIR
     )
-    time.sleep(1.0) # Allow HTTPS to bind/fail
+    time.sleep(1.0) # Allow HTTPS server time to bind to the port or fail.
 
+    # Check if HTTPS server started successfully.
     if https_thread and https_thread.is_alive():
+        # If HTTPS is okay, start the WSS server process.
+        # WSS server reads its config (HOST/PORT/DEBUG) from server/config.py directly.
         wss_process = _start_wss_server_process()
         if wss_process:
-            servers_started_ok = True # Both servers started
+            servers_started_ok = True # Both servers started successfully.
         else: print("Failed to start WSS server process. Shutting down HTTPS server.")
     else: print("Failed to start HTTPS server thread.")
 
-    # Trigger immediate cleanup if any part failed
+    # Trigger immediate cleanup if any part of the startup failed.
     if not servers_started_ok:
-         stop_event.set()
-         # Call simplified shutdown logic directly
+         stop_event.set() # Signal threads to stop.
+         # Call simplified shutdown logic directly.
          _shutdown_servers()
          print("Exiting due to server startup failure.")
-         sys.exit(1)
+         sys.exit(1) # Exit the manager script.
 
     # --- Manage Running Servers ---
     print("\nServers are running. Press Ctrl+C to stop.")
     try:
+        # Main loop to monitor server status while running.
         while not stop_event.is_set():
-            # Check WSS process
+            # Check if the WSS process has terminated unexpectedly.
             if wss_process and wss_process.poll() is not None:
                 print(f"\nError: WSS server process terminated unexpectedly (Exit Code: {wss_process.returncode}).")
-                stop_event.set(); break
-            # Check HTTPS thread
+                stop_event.set(); break # Signal shutdown and exit loop.
+            # Check if the HTTPS thread has terminated unexpectedly.
             if https_thread and not https_thread.is_alive():
+                 # Differentiate between thread dying and server failing during startup.
                  if https_server is not None: print("\nError: HTTPS server thread terminated unexpectedly.")
                  else: print("\nError: HTTPS server failed during startup.")
-                 stop_event.set(); break
-            time.sleep(0.5) # Avoid busy-waiting
-    except KeyboardInterrupt: print("\nShutdown signal (Ctrl+C) received..."); stop_event.set()
-    except Exception as e: print(f"\nUnexpected error in main wait loop: {e}"); stop_event.set()
+                 stop_event.set(); break # Signal shutdown and exit loop.
+            time.sleep(0.5) # Pause briefly to avoid busy-waiting.
+    except KeyboardInterrupt:
+        # Handle Ctrl+C gracefully.
+        print("\nShutdown signal (Ctrl+C) received..."); stop_event.set()
+    except Exception as e:
+        # Handle any other unexpected errors in the monitoring loop.
+        print(f"\nUnexpected error in main wait loop: {e}"); stop_event.set()
     finally:
         # --- Graceful Shutdown Sequence ---
+        # Ensure shutdown logic runs regardless of how the loop exited.
         _shutdown_servers()
 
 def _shutdown_servers():
@@ -541,30 +763,38 @@ def _shutdown_servers():
     print("Initiating server shutdown...")
 
     # Shutdown HTTPS Server
+    # Check if the server instance exists.
     if https_server: print("Shutting down HTTPS server..."); https_server.shutdown()
+    # Check if the thread exists and is alive.
     if https_thread and https_thread.is_alive():
         print("Waiting for HTTPS thread..."); https_thread.join(timeout=5)
+        # Check again if the thread terminated gracefully.
         if https_thread.is_alive(): print("Warning: HTTPS thread did not exit gracefully.")
-    https_thread = None
+    https_thread = None # Clear the global reference.
 
     # Shutdown WSS Process
+    # Check if the process exists and is still running.
     if wss_process and wss_process.poll() is None:
         print("Terminating WSS server process...")
         try:
+            # Attempt graceful termination first.
             wss_process.terminate(); wss_process.wait(timeout=5)
             print("WSS server process terminated.")
         except subprocess.TimeoutExpired:
+            # If terminate fails, forcefully kill the process.
             print("WSS process did not terminate gracefully, killing."); wss_process.kill()
-            try: wss_process.wait(timeout=2)
-            except Exception: pass
+            try: wss_process.wait(timeout=2) # Wait briefly after kill.
+            except Exception: pass # Ignore errors during wait after kill.
         except Exception as e: print(f"Error terminating WSS process: {e}")
-        finally: wss_process = None
+        finally: wss_process = None # Clear the global reference.
 
     # Shutdown WSS Logging Thread
+    # Check if the thread exists and is alive.
     if wss_log_thread and wss_log_thread.is_alive():
         print("Waiting for WSS logging thread..."); wss_log_thread.join(timeout=2)
+        # Check again if the thread terminated gracefully.
         if wss_log_thread.is_alive(): print("Warning: WSS logging thread did not exit.")
-    wss_log_thread = None
+    wss_log_thread = None # Clear the global reference.
 
     print("Shutdown complete.")
 
@@ -573,14 +803,17 @@ def _shutdown_servers():
 def main():
     """Main function: Check deps, read config, run menu, start/manage servers."""
     print("--- Starting HeliX Manager ---")
-    check_or_install_websockets()
-    current_settings = read_config()
-    should_start = config_menu(current_settings) # Returns True to start, False to exit
+    # Call the updated dependency check function.
+    check_dependencies()
+    current_settings = read_config() # Load current configuration (WSS/ServerDebug from file, HTTPS/ClientDebug defaults/file).
+    should_start = config_menu(current_settings) # Display menu and get user choice.
 
     if should_start:
-        start_servers(current_settings) # Enter start/manage/shutdown loop
+        # Start servers using the potentially modified settings dictionary.
+        start_servers(current_settings) # Enter monitoring loop.
     else:
-        print("Exiting HeliX Manager.") # Exited from menu
+        print("Exiting HeliX Manager.") # User chose to exit from the menu.
 
 if __name__ == "__main__":
+    # Run the main function only when the script is executed directly.
     main()

@@ -8,6 +8,10 @@
 
     <!-- Link to the external CSS file for styling -->
     <link rel="stylesheet" href="css/style.css">
+
+    <!-- Link to the favicon -->
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+
 </head>
 <body>
     <!-- The main content visible to the user -->
@@ -49,11 +53,22 @@
 
         <!-- Main Content Area -->
         <!-- This area displays different views depending on the application state (welcome, active chat, incoming request, etc.). -->
+        <!-- It now contains the overlay and all the content panes. -->
         <div id="main-content">
+
+            <!-- NEW: Overlay Element -->
+            <!-- This div will cover the main content area with a semi-transparent background -->
+            <!-- when modal-like panes (Info, Incoming Request) are shown. -->
+            <div id="overlay"></div>
+            <!-- End Overlay Element -->
 
             <!-- Welcome Message (Shown when registered but no chat selected) -->
             <!-- This is the default view after registration. -->
+            <!-- It will remain visible *behind* the overlay when info/request panes are shown. -->
             <div id="welcome-message">
+                <!-- Added Logo Image -->
+                <img id="welcome-logo" src="favicon.ico" alt="HeliX Logo">
+                <!-- End Added Logo Image -->
                 <h2>Welcome to HeliX Chat!</h2>
                 <p>Your secure, ephemeral E2EE chat application.</p>
                 <p>Use the sidebar to start a new chat by entering a peer's ID, or wait for an incoming request.</p>
@@ -62,6 +77,7 @@
 
             <!-- Incoming Request Area (Shown temporarily when a peer requests a chat) -->
             <!-- This view allows the user to accept or deny an incoming chat request. -->
+            <!-- It will appear *on top* of the overlay. -->
             <div id="incoming-request-area">
                 <div id="incoming-request-text"></div> <!-- Text displaying who sent the request -->
                 <button id="accept-button">Accept</button> <!-- Button to accept the request -->
@@ -70,6 +86,7 @@
 
             <!-- Info Area (Shown for Denials, Timeouts, Errors related to a session) -->
             <!-- This view displays messages like "Request denied", "Request timed out", etc. -->
+            <!-- It will appear *on top* of the overlay. -->
             <div id="info-area">
                 <p id="info-message"></p> <!-- The specific information message -->
                 <button id="retry-request-button">Retry</button> <!-- Button to retry a timed-out request (shown conditionally) -->
@@ -78,6 +95,7 @@
 
             <!-- Waiting for Response Area (Shown after initiating a chat, before peer responds) -->
             <!-- This view indicates that the application is waiting for the peer to accept/deny the request. -->
+            <!-- This pane replaces the welcome message, overlay is not used here. -->
             <div id="waiting-response-area">
                 <p id="waiting-response-text"></p> <!-- Text indicating waiting status (e.g., "Waiting for PeerID...") -->
                 <button id="cancel-request-button">Cancel Request</button> <!-- Button to cancel the outgoing request -->
@@ -85,6 +103,7 @@
 
             <!-- Active Chat Area (Shown when a chat session is established and selected) -->
             <!-- This is the main chat view containing the message history and input field. -->
+            <!-- This pane replaces the welcome message, overlay is not used here. -->
             <div id="active-chat-area">
                 <!-- Header for the active chat, showing peer ID and disconnect button -->
                 <div id="chat-header">

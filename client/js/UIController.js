@@ -38,6 +38,7 @@ class UIController {
 
         // Main Content Area Panes (different views within the main area)
         this.mainContent = document.getElementById('main-content');
+        this.overlay = document.getElementById('overlay'); // Reference to the overlay div
         this.welcomeMessage = document.getElementById('welcome-message'); // Default welcome view
         this.myIdentifierWelcome = document.getElementById('my-identifier-welcome'); // User's ID display in welcome message
         this.incomingRequestArea = document.getElementById('incoming-request-area'); // View for incoming requests
@@ -70,9 +71,11 @@ class UIController {
         // Set the initial visibility of UI sections.
         this.showRegistration();
 
+        // Log initialization (not wrapped in DEBUG as it's fundamental)
         console.log('UIController initialized.');
         // Validate that all expected elements were found in the DOM.
         if (!this.validateElements()) {
+             // Always log validation errors.
              console.error("!!! UIController failed validation - Some elements not found! Check HTML IDs.");
         }
     }
@@ -84,7 +87,10 @@ class UIController {
     updateStatus(message) {
         if (this.statusElement) {
             this.statusElement.textContent = `Status: ${message}`;
-            console.log(`UI Status Updated: ${message}`);
+            // Log status updates only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log(`UI Status Updated: ${message}`);
+            }
         }
     }
 
@@ -92,7 +98,7 @@ class UIController {
     // Methods to control the visibility of different panes/sections.
 
     /**
-     * Hides all major panes within the main content area.
+     * Hides all major panes within the main content area AND the overlay.
      * Used before showing a specific pane to ensure only one is visible.
      */
     hideAllMainPanes() {
@@ -101,6 +107,7 @@ class UIController {
         if (this.activeChatArea) this.activeChatArea.style.display = 'none';
         if (this.infoArea) this.infoArea.style.display = 'none';
         if (this.waitingResponseArea) this.waitingResponseArea.style.display = 'none';
+        if (this.overlay) this.overlay.style.display = 'none'; // Hide overlay too
         // Also ensure the typing indicator is hidden when switching panes.
         this.hideTypingIndicator();
     }
@@ -110,7 +117,8 @@ class UIController {
      * Enables registration controls and focuses the identifier input.
      */
     showRegistration() {
-        console.log("UI: Showing Registration");
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Showing Registration");
         if (this.registrationArea) this.registrationArea.style.display = 'flex'; // Use flex for centering
         if (this.appContainer) this.appContainer.style.display = 'none';
         this.setRegistrationControlsEnabled(true); // Enable input/button
@@ -125,7 +133,8 @@ class UIController {
      * @param {string} myId - The user's registered identifier.
      */
     showMainApp(myId) {
-        console.log("UI: Showing Main App");
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Showing Main App");
         if (this.registrationArea) this.registrationArea.style.display = 'none';
         if (this.appContainer) this.appContainer.style.display = 'flex'; // Show the main layout
         if (this.myIdentifierDisplay) this.myIdentifierDisplay.textContent = myId; // Show ID in sidebar
@@ -139,8 +148,9 @@ class UIController {
      * Hides other panes and ensures appropriate controls are enabled/disabled.
      */
     showWelcomeMessage() {
-        console.log("UI: Showing Welcome Message Pane");
-        this.hideAllMainPanes(); // Hide others
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Showing Welcome Message Pane");
+        this.hideAllMainPanes(); // Hide others (including overlay)
         if (this.welcomeMessage) this.welcomeMessage.style.display = 'block'; // Show welcome
         this.setInitiationControlsEnabled(true); // Allow starting new chats
         this.setChatControlsEnabled(false); // Disable active chat controls
@@ -151,13 +161,16 @@ class UIController {
     }
 
     /**
-     * Shows the incoming chat request pane.
+     * Shows the incoming chat request pane with the overlay effect.
      * @param {string} senderId - The identifier of the peer sending the request.
      */
     showIncomingRequest(senderId) {
-        console.log(`UI: Showing Incoming Request Pane for ${senderId}`);
-        this.hideAllMainPanes();
-        if (this.incomingRequestArea) this.incomingRequestArea.style.display = 'block';
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Showing Incoming Request Pane for ${senderId}`);
+        this.hideAllMainPanes(); // Hide other panes first
+        if (this.welcomeMessage) this.welcomeMessage.style.display = 'block'; // Ensure welcome is visible behind overlay
+        if (this.overlay) this.overlay.style.display = 'block'; // Show the overlay
+        if (this.incomingRequestArea) this.incomingRequestArea.style.display = 'block'; // Show the request pane on top
         if (this.incomingRequestText) this.incomingRequestText.textContent = `Incoming chat request from ${senderId}. Accept or Deny?`;
         this.setIncomingRequestControlsEnabled(true); // Enable accept/deny buttons
         // Disable other potentially active controls
@@ -168,15 +181,18 @@ class UIController {
     }
 
     /**
-     * Shows the information pane (for denials, timeouts, errors).
+     * Shows the information pane (for denials, timeouts, errors) with the overlay effect.
      * @param {string} peerId - The peer ID this information relates to.
      * @param {string} message - The message to display in the pane.
      * @param {boolean} showRetry - Whether to show the "Retry" button.
      */
     showInfoMessage(peerId, message, showRetry) {
-        console.log(`UI: Showing Info Pane for peer ${peerId}. Retry: ${showRetry}`);
-        this.hideAllMainPanes();
-        if (this.infoArea) this.infoArea.style.display = 'block';
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Showing Info Pane for peer ${peerId}. Retry: ${showRetry}`);
+        this.hideAllMainPanes(); // Hide other panes first
+        if (this.welcomeMessage) this.welcomeMessage.style.display = 'block'; // Ensure welcome is visible behind overlay
+        if (this.overlay) this.overlay.style.display = 'block'; // Show the overlay
+        if (this.infoArea) this.infoArea.style.display = 'block'; // Show the info pane on top
         if (this.infoMessage) this.infoMessage.textContent = message || `An issue occurred regarding ${peerId}.`;
         // Store peerId in button datasets for event handlers
         if (this.closeInfoButton) this.closeInfoButton.dataset.peerid = peerId;
@@ -197,13 +213,16 @@ class UIController {
     }
 
     /**
-     * Shows the "waiting for response" pane after initiating a chat.
+     * Shows the "waiting for response" pane after initiating a chat, with the overlay effect.
      * @param {string} peerId - The peer ID we are waiting for.
      */
     showWaitingForResponse(peerId) {
-        console.log(`UI: Showing Waiting for Response Pane for ${peerId}`);
-        this.hideAllMainPanes();
-        if (this.waitingResponseArea) this.waitingResponseArea.style.display = 'block';
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Showing Waiting for Response Pane for ${peerId}`);
+        this.hideAllMainPanes(); // Hide others first
+        if (this.welcomeMessage) this.welcomeMessage.style.display = 'block'; // Ensure welcome is visible behind overlay
+        if (this.overlay) this.overlay.style.display = 'block'; // Show the overlay
+        if (this.waitingResponseArea) this.waitingResponseArea.style.display = 'block'; // Show the waiting pane on top
         if (this.waitingResponseText) this.waitingResponseText.textContent = `Waiting for ${peerId} to respond...`;
         // Store peerId in button dataset for event handler
         if (this.cancelRequestButton) this.cancelRequestButton.dataset.peerid = peerId;
@@ -220,11 +239,13 @@ class UIController {
     /**
      * Shows the active chat pane for a specific peer.
      * Clears previous messages and focuses the message input field.
+     * (Overlay is not used for this pane).
      * @param {string} peerId - The identifier of the peer for the active chat.
      */
     showActiveChat(peerId) {
-        console.log(`UI: Showing Active Chat Pane for ${peerId}`);
-        this.hideAllMainPanes();
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Showing Active Chat Pane for ${peerId}`);
+        this.hideAllMainPanes(); // Hide others (including overlay)
         if (this.activeChatArea) this.activeChatArea.style.display = 'flex'; // Show chat area
         if (this.peerIdentifierDisplay) this.peerIdentifierDisplay.textContent = peerId; // Set peer ID in header
         this.clearMessageInput(); // Clear any old text in input
@@ -245,7 +266,8 @@ class UIController {
      * @param {string} myId - The user's registered identifier.
      */
     showDefaultRegisteredView(myId) {
-        console.log("UI: Showing Default Registered View (Welcome Pane)");
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Showing Default Registered View (Welcome Pane)");
         // Ensure the main app container is visible if it wasn't already
         if (this.appContainer && this.appContainer.style.display === 'none') {
             this.showMainApp(myId);
@@ -266,16 +288,30 @@ class UIController {
     focusPeerIdInput() {
         if (this.peerIdInput && !this.peerIdInput.disabled) {
             // Use setTimeout to ensure focus occurs after potential layout changes.
-            setTimeout(() => { console.log("UI: Focusing Peer ID Input"); this.peerIdInput.focus(); }, 0);
-        } else { console.log("UI: Peer ID Input not available or disabled for focus."); }
+            setTimeout(() => {
+                // Log focus event only if DEBUG is enabled.
+                if (config.DEBUG) console.log("UI: Focusing Peer ID Input");
+                this.peerIdInput.focus();
+            }, 0);
+        } else {
+            // Log lack of focus only if DEBUG is enabled.
+            if (config.DEBUG) console.log("UI: Peer ID Input not available or disabled for focus.");
+        }
     }
 
     /** Sets focus to the message input field if available and enabled. */
     focusMessageInput() {
         if (this.messageInput && !this.messageInput.disabled) {
             // Use setTimeout to ensure focus occurs after potential layout changes.
-            setTimeout(() => { console.log("UI: Focusing Message Input"); this.messageInput.focus(); }, 0);
-        } else { console.log("UI: Message Input not available or disabled for focus."); }
+            setTimeout(() => {
+                // Log focus event only if DEBUG is enabled.
+                if (config.DEBUG) console.log("UI: Focusing Message Input");
+                this.messageInput.focus();
+            }, 0);
+        } else {
+            // Log lack of focus only if DEBUG is enabled.
+            if (config.DEBUG) console.log("UI: Message Input not available or disabled for focus.");
+        }
     }
     // ---------------------------
 
@@ -306,31 +342,33 @@ class UIController {
 
     /** Enables/disables registration input and button, optionally showing loading state. */
     setRegistrationControlsEnabled(enabled, loadingState = false) {
-        console.log(`UI: Setting Registration Controls Enabled: ${enabled}, Loading: ${loadingState}`);
+        // Log control state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Setting Registration Controls Enabled: ${enabled}, Loading: ${loadingState}`);
         if (this.identifierInput) this.identifierInput.disabled = !enabled || loadingState;
         this._setButtonState(this.registerButton, enabled, loadingState, "Registering...");
     }
 
-    /** Enables/disables chat initiation input field. Button state managed separately if needed. */
+    /** Enables/disables chat initiation input field and button, optionally showing loading state. */
     setInitiationControlsEnabled(enabled, loadingState = false) {
-        // Note: Currently only disables the input. Button state might need separate handling
-        // if a loading state is desired for the "Start Chat" button itself during initiation.
-        console.log(`UI: Setting Initiation Controls Enabled: ${enabled} (Button unchanged)`);
-        if (this.peerIdInput) { this.peerIdInput.disabled = !enabled; }
-        // Example: If Start Chat button needed loading state:
-        // this._setButtonState(this.startChatButton, enabled, loadingState, "Starting...");
+        // Log control state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Setting Initiation Controls Enabled: ${enabled}, Loading: ${loadingState}`);
+        if (this.peerIdInput) { this.peerIdInput.disabled = !enabled || loadingState; }
+        // Apply loading state to the Start Chat button as well
+        this._setButtonState(this.startChatButton, enabled, loadingState, "Starting...");
     }
 
     /** Enables/disables incoming request (Accept/Deny) buttons, optionally showing loading state. */
     setIncomingRequestControlsEnabled(enabled, loadingState = false) {
-        console.log(`UI: Setting Incoming Request Controls Enabled: ${enabled}, Loading: ${loadingState}`);
+        // Log control state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Setting Incoming Request Controls Enabled: ${enabled}, Loading: ${loadingState}`);
         this._setButtonState(this.acceptButton, enabled, loadingState, "Accepting...");
         this._setButtonState(this.denyButton, enabled, loadingState, "Denying...");
     }
 
     /** Enables/disables active chat controls (input, send, disconnect), optionally showing loading state. */
     setChatControlsEnabled(enabled, loadingState = false) {
-        console.log(`UI: Setting Chat Controls Enabled: ${enabled}, Loading: ${loadingState}`);
+        // Log control state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Setting Chat Controls Enabled: ${enabled}, Loading: ${loadingState}`);
         if (this.messageInput) this.messageInput.disabled = !enabled || loadingState;
         this._setButtonState(this.sendButton, enabled, loadingState, "Sending...");
         this._setButtonState(this.disconnectButton, enabled, loadingState, "Disconnecting...");
@@ -338,7 +376,8 @@ class UIController {
 
     /** Enables/disables info pane controls (Close, Retry), optionally showing loading state. */
     setInfoControlsEnabled(enabled, loadingState = false) {
-        console.log(`UI: Setting Info Controls Enabled: ${enabled}, Loading: ${loadingState}`);
+        // Log control state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Setting Info Controls Enabled: ${enabled}, Loading: ${loadingState}`);
         this._setButtonState(this.closeInfoButton, enabled, loadingState, "Closing...");
         // Handle retry button only if it's currently visible
         if (this.retryRequestButton && this.retryRequestButton.style.display !== 'none') {
@@ -351,7 +390,8 @@ class UIController {
 
     /** Enables/disables waiting pane controls (Cancel), optionally showing loading state. */
     setWaitingControlsEnabled(enabled, loadingState = false) {
-        console.log(`UI: Setting Waiting Controls Enabled: ${enabled}, Loading: ${loadingState}`);
+        // Log control state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Setting Waiting Controls Enabled: ${enabled}, Loading: ${loadingState}`);
         this._setButtonState(this.cancelRequestButton, enabled, loadingState, "Cancelling...");
     }
     // -----------------------------------------
@@ -367,7 +407,8 @@ class UIController {
         if (!this.sessionList || this.sessionList.querySelector(`[data-peerid="${peerId}"]`)) {
             return;
         }
-        console.log(`UI: Adding session ${peerId} to list.`);
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Adding session ${peerId} to list.`);
         const listItem = document.createElement('li');
         listItem.textContent = peerId; // Set text to peer ID
         listItem.dataset.peerid = peerId; // Store peer ID in data attribute for easy retrieval
@@ -385,10 +426,12 @@ class UIController {
     removeSessionFromList(peerId) {
         const listItem = this.sessionList ? this.sessionList.querySelector(`[data-peerid="${peerId}"]`) : null;
         if (listItem) {
-            console.log(`UI: Removing session ${peerId} from list.`);
+            // Log action only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`UI: Removing session ${peerId} from list.`);
             listItem.remove(); // Remove the element
         } else {
-            console.log(`UI: Session ${peerId} not found in list for removal.`);
+            // Log missing item only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`UI: Session ${peerId} not found in list for removal.`);
         }
     }
 
@@ -399,7 +442,8 @@ class UIController {
      */
     setActiveSessionInList(peerId) {
         if (!this.sessionList) return;
-        console.log(`UI: Setting active session in list: ${peerId}`);
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Setting active session in list: ${peerId}`);
         this.clearActiveSessionInList(); // Remove active class from others first
         const listItem = this.sessionList.querySelector(`[data-peerid="${peerId}"]`);
         if (listItem) {
@@ -429,12 +473,14 @@ class UIController {
             if (hasUnread) {
                 // Only add 'has-unread' if the item isn't already the active one
                 if (!listItem.classList.contains('active-session')) {
-                    console.log(`UI: Setting unread indicator for ${peerId}`);
+                    // Log action only if DEBUG is enabled.
+                    if (config.DEBUG) console.log(`UI: Setting unread indicator for ${peerId}`);
                     listItem.classList.add('has-unread');
                 }
             } else {
                 // Always remove 'has-unread' when requested
-                console.log(`UI: Clearing unread indicator for ${peerId}`);
+                // Log action only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`UI: Clearing unread indicator for ${peerId}`);
                 listItem.classList.remove('has-unread');
             }
         }
@@ -546,6 +592,31 @@ class UIController {
     }
     // -----------------------------------
 
+    // --- NEW: Info Pane Visibility Checks ---
+
+    /**
+     * Checks if the info pane is currently visible and associated with the specified peer.
+     * @param {string} peerId - The peer ID to check against the info pane's data.
+     * @returns {boolean} True if the info pane is visible and matches the peerId, false otherwise.
+     */
+    isInfoPaneVisibleFor(peerId) {
+        if (!this.infoArea || this.infoArea.style.display === 'none') {
+            return false; // Pane is not visible
+        }
+        // Check the dataset peerid on the close button (or retry button if needed)
+        const storedPeerId = this.closeInfoButton?.dataset?.peerid || this.retryRequestButton?.dataset?.peerid;
+        return storedPeerId === peerId; // Return true if visible and peerId matches
+    }
+
+    /**
+     * Checks if the info pane is currently visible, regardless of the associated peer.
+     * @returns {boolean} True if the info pane's display style is not 'none', false otherwise.
+     */
+    isAnyInfoPaneVisible() {
+        return this.infoArea ? this.infoArea.style.display !== 'none' : false;
+    }
+    // --------------------------------------
+
     // --- Event Listener Setup ---
     // Methods to attach event handlers (provided by main.js/SessionManager) to UI elements.
 
@@ -607,6 +678,7 @@ class UIController {
                 if (peerId) {
                     handler(peerId); // Call handler with the ID
                 } else {
+                    // Always log this error.
                     console.error("Close info button clicked, but no peerId found in dataset.");
                 }
             });
@@ -624,6 +696,7 @@ class UIController {
                 if (peerId) {
                     handler(peerId); // Call handler with the ID
                 } else {
+                    // Always log this error.
                     console.error("Retry button clicked, but no peerId found in dataset.");
                 }
             });
@@ -641,6 +714,7 @@ class UIController {
                  if (peerId) {
                      handler(peerId); // Call handler with the ID
                  } else {
+                     // Always log this error.
                      console.error("Cancel request button clicked, but no peerId found in dataset.");
                  }
             });
@@ -674,7 +748,8 @@ class UIController {
             this.statusElement, this.registrationArea, this.identifierInput, this.registerButton,
             this.appContainer, this.sidebar, this.myIdentifierDisplay, this.initiationArea,
             this.peerIdInput, this.startChatButton, this.sessionListContainer, this.sessionList,
-            this.mainContent, this.welcomeMessage, this.myIdentifierWelcome,
+            this.mainContent, this.overlay, // Added overlay
+            this.welcomeMessage, this.myIdentifierWelcome,
             this.incomingRequestArea, this.incomingRequestText,
             this.acceptButton, this.denyButton,
             this.infoArea, this.infoMessage, this.closeInfoButton, this.retryRequestButton,
@@ -692,6 +767,7 @@ class UIController {
             // Find the property name associated with the element for logging
             const keyName = Object.keys(this).find(key => this[key] === el);
             if (!el) {
+                // Always log validation warnings.
                 console.warn(`UIController: Element for property '${keyName || 'UNKNOWN'}' not found! Check HTML IDs.`);
                 allFound = false;
             }

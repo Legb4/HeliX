@@ -66,6 +66,7 @@ class CryptoModule {
         // Defines what the derived AES session key can be used for (encrypting/decrypting messages).
         this.derivedKeyUsages = ["encrypt", "decrypt"];
 
+        // Log initialization (not wrapped in DEBUG as it's a one-time info message)
         console.log("CryptoModule initialized (ECDH Mode).");
     }
 
@@ -77,7 +78,10 @@ class CryptoModule {
      * @returns {Promise<boolean>} True if key generation was successful, false otherwise.
      */
     async generateECDHKeys() {
-        console.log("Generating ephemeral ECDH key pair (P-256)...");
+        // Log key generation attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Generating ephemeral ECDH key pair (P-256)...");
+        }
         try {
             // Use the Web Crypto API to generate the ECDH key pair.
             const keyPair = await window.crypto.subtle.generateKey(
@@ -88,9 +92,13 @@ class CryptoModule {
             // Store the generated keys.
             this.publicKey = keyPair.publicKey;
             this.privateKey = keyPair.privateKey;
-            console.log("Ephemeral ECDH key pair generated successfully.");
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("Ephemeral ECDH key pair generated successfully.");
+            }
             return true; // Indicate success
         } catch (error) {
+            // Always log errors.
             console.error("Error generating ECDH keys:", error);
             // Clear any potentially partially generated keys on error.
             this.publicKey = null;
@@ -108,10 +116,14 @@ class CryptoModule {
     async getPublicKeyBase64() {
         // Ensure a public key exists before trying to export.
         if (!this.publicKey) {
+            // Always log this error as it indicates a programming mistake.
             console.error("Cannot export public key: No public key generated or stored.");
             return null;
         }
-        console.log("Exporting ECDH public key to Base64 (SPKI format)...");
+        // Log export attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Exporting ECDH public key to Base64 (SPKI format)...");
+        }
         try {
             // Export the key in SPKI format (returns an ArrayBuffer).
             const exportedSpki = await window.crypto.subtle.exportKey(
@@ -120,9 +132,13 @@ class CryptoModule {
             );
             // Convert the ArrayBuffer to a Base64 string.
             const base64Key = this.arrayBufferToBase64(exportedSpki);
-            console.log("ECDH Public key exported successfully (Base64):", base64Key.substring(0, 30) + "..."); // Log prefix
+            // Log success (truncated key) only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("ECDH Public key exported successfully (Base64):", base64Key.substring(0, 30) + "..."); // Log prefix
+            }
             return base64Key;
         } catch (error) {
+            // Always log errors.
             console.error("Error exporting ECDH public key:", error);
             return null;
         }
@@ -134,9 +150,13 @@ class CryptoModule {
      * @returns {Promise<CryptoKey|null>} The imported CryptoKey object representing the peer's public key, or null on failure.
      */
     async importPublicKeyBase64(base64Key) {
-        console.log("Importing peer ECDH public key from Base64 (SPKI format)...");
+        // Log import attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Importing peer ECDH public key from Base64 (SPKI format)...");
+        }
         // Basic validation of the input.
         if (!base64Key || typeof base64Key !== 'string') {
+             // Always log this error.
              console.error("Invalid Base64 key provided for import.");
              return null;
         }
@@ -151,9 +171,13 @@ class CryptoModule {
                 true,               // Mark the imported key as extractable (standard practice)
                 []                  // IMPORTANT: Peer's public key usage is empty. It's only used as input to deriveBits, not for direct crypto operations by this module.
             );
-            console.log("Peer ECDH public key imported successfully.");
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("Peer ECDH public key imported successfully.");
+            }
             return importedKey; // Return the CryptoKey object
         } catch (error) {
+            // Always log errors.
             console.error("Error importing peer ECDH public key:", error);
             return null;
         }
@@ -168,12 +192,17 @@ class CryptoModule {
      * @returns {Promise<ArrayBuffer|null>} The raw shared secret as an ArrayBuffer, or null on failure.
      */
     async deriveSharedSecret(peerPublicKey) {
-        console.log("Deriving shared secret using ECDH...");
+        // Log derivation attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Deriving shared secret using ECDH...");
+        }
         if (!this.privateKey) {
+            // Always log this error.
             console.error("Cannot derive secret: Own private key not available.");
             return null;
         }
         if (!peerPublicKey) {
+            // Always log this error.
             console.error("Cannot derive secret: Peer public key not provided.");
             return null;
         }
@@ -188,9 +217,13 @@ class CryptoModule {
                 this.privateKey, // Own private key
                 256 // Desired length of the derived secret in bits (can be adjusted, 256 is common)
             );
-            console.log("Shared secret derived successfully (raw bits).");
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("Shared secret derived successfully (raw bits).");
+            }
             return sharedSecretBits;
         } catch (error) {
+            // Always log errors.
             console.error("Error deriving shared secret:", error);
             return null;
         }
@@ -203,8 +236,12 @@ class CryptoModule {
      * @returns {Promise<boolean>} True if key derivation was successful, false otherwise.
      */
     async deriveSessionKey(sharedSecretBits) {
-        console.log("Deriving AES-GCM session key from shared secret using HKDF...");
+        // Log derivation attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Deriving AES-GCM session key from shared secret using HKDF...");
+        }
         if (!sharedSecretBits) {
+            // Always log this error.
             console.error("Cannot derive session key: Shared secret bits not provided.");
             return false;
         }
@@ -230,9 +267,13 @@ class CryptoModule {
                 this.derivedKeyUsages    // Usages for the derived key (encrypt, decrypt)
             );
 
-            console.log("AES-GCM session key derived and stored successfully.");
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("AES-GCM session key derived and stored successfully.");
+            }
             return true;
         } catch (error) {
+            // Always log errors.
             console.error("Error deriving session key:", error);
             this.derivedSessionKey = null; // Clear any partial result
             return false;
@@ -258,23 +299,31 @@ class CryptoModule {
     async encryptAES(dataBuffer) {
         // Use the derived session key stored in the instance.
         if (!this.derivedSessionKey) {
+            // Always log this error.
             console.error("Cannot encrypt AES: Derived session key not available.");
             return null;
         }
         try {
             // Generate a cryptographically random IV of the configured length.
             const iv = window.crypto.getRandomValues(new Uint8Array(this.aesIVLength));
-            console.log("Encrypting data with derived AES-GCM session key...");
+            // Log encryption attempt only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("Encrypting data with derived AES-GCM session key...");
+            }
             // Encrypt the data using AES-GCM.
             const encryptedBuffer = await window.crypto.subtle.encrypt(
                 { name: "AES-GCM", iv: iv }, // Specify algorithm and the unique IV
                 this.derivedSessionKey,     // The derived AES key
                 dataBuffer                  // The data to encrypt
             );
-            console.log("AES-GCM encryption successful.");
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("AES-GCM encryption successful.");
+            }
             // Return both the encrypted data and the IV, as the IV is needed for decryption.
             return { encryptedBuffer, iv };
         } catch (error) {
+            // Always log errors.
             console.error("Error during AES encryption:", error);
             return null;
         }
@@ -290,15 +339,20 @@ class CryptoModule {
     async decryptAES(encryptedBuffer, iv) {
         // Use the derived session key stored in the instance.
         if (!this.derivedSessionKey) {
+            // Always log this error.
             console.error("Cannot decrypt AES: Derived session key not available.");
             return null;
         }
         // Validate the IV length.
         if (!iv || iv.length !== this.aesIVLength) {
+            // Always log this error.
             console.error("Cannot decrypt AES: Invalid IV provided.");
             return null;
         }
-        console.log("Decrypting data with derived AES-GCM session key...");
+        // Log decryption attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Decrypting data with derived AES-GCM session key...");
+        }
         try {
             // Decrypt the data using AES-GCM.
             const decryptedBuffer = await window.crypto.subtle.decrypt(
@@ -306,11 +360,15 @@ class CryptoModule {
                 this.derivedSessionKey,     // The derived AES key
                 encryptedBuffer             // The encrypted data
             );
-            console.log("AES-GCM decryption successful.");
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("AES-GCM decryption successful.");
+            }
             return decryptedBuffer; // Return the original data buffer
         } catch (error) {
             // Decryption errors are common if the key, IV, or data is incorrect/tampered.
             // AES-GCM provides authenticity, so errors often indicate integrity issues.
+            // Always log decryption errors.
             console.error("Error during AES decryption:", error);
             return null;
         }
@@ -324,13 +382,20 @@ class CryptoModule {
      * @returns {Promise<ArrayBuffer|null>} The SHA-256 hash as an ArrayBuffer, or null on failure.
      */
     async hashData(data) {
-        console.log("Hashing data with SHA-256...");
+        // Log hashing attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Hashing data with SHA-256...");
+        }
         try {
             // Calculate the SHA-256 digest of the data.
             const hashBuffer = await window.crypto.subtle.digest("SHA-256", data);
-            console.log("Data hashed successfully.");
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("Data hashed successfully.");
+            }
             return hashBuffer;
         } catch (error) {
+            // Always log errors.
             console.error("Error during hashing:", error);
             return null;
         }
@@ -342,13 +407,19 @@ class CryptoModule {
      * Important for ephemeral sessions to remove keys when no longer needed.
      */
     wipeKeys() {
-        console.log("Wiping ECDH and derived cryptographic keys...");
+        // Log wiping attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Wiping ECDH and derived cryptographic keys...");
+        }
         this.publicKey = null;
         this.privateKey = null;
         this.derivedSessionKey = null; // Also clear the derived key
         // Potentially add memory clearing techniques if supported/needed,
         // but setting to null removes the primary reference.
-        console.log("Keys wiped.");
+        // Log completion only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Keys wiped.");
+        }
     }
 
     // --- Helper Functions (Remain the same) ---

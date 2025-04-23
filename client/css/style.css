@@ -23,6 +23,7 @@
     --bg-list-active: #094771;          /* Background for the active session list item */
     --bg-info: #333322;                 /* Background for informational areas (e.g., incoming request) */
     --bg-danger-info: #442a31;          /* Background for error/denial info areas */
+    --bg-overlay: rgba(0, 0, 0, 0.6);   /* Background for the overlay */
 
     /* Text Colors */
     --text-light: #cccccc;              /* Primary light text color */
@@ -278,7 +279,23 @@ body {
     flex-direction: column; /* Stack content vertically */
     overflow: hidden; /* Prevent content overflow */
     background-color: var(--bg-main); /* Background color */
+    position: relative; /* Needed for absolute positioning of overlay */
 }
+
+/* --- Overlay Styling --- */
+/* Styles the overlay div shown behind modal panes. */
+#overlay {
+    display: none; /* Hidden by default */
+    position: absolute; /* Position relative to #main-content */
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--bg-overlay); /* Use variable for semi-transparent background */
+    z-index: 5; /* Position it above welcome, below info/request */
+}
+/* --- End Overlay Styling --- */
+
 
 /* Panes within Main Content - Controlled by JS */
 /* Styles for the default welcome message shown when no chat is active. */
@@ -289,6 +306,8 @@ body {
     max-width: 550px; /* Limit width for readability */
     line-height: 1.7; /* Increase line height */
     /* display: none; */ /* Initially hidden/shown by JS */
+    position: relative; /* Ensure it participates in stacking context */
+    z-index: 1; /* Position it below the overlay */
 }
 /* Styles the main heading in the welcome message. */
 #welcome-message h2 {
@@ -308,17 +327,35 @@ body {
     font-weight: 600; /* Semi-bold weight */
 }
 
+/* --- Welcome Logo Styling --- */
+/* Styles the logo image added to the welcome message pane. */
+#welcome-logo {
+    display: block; /* Allows margin auto for centering */
+    width: 80px;    /* Set desired width */
+    height: auto;   /* Maintain aspect ratio */
+    margin: 0 auto 25px auto; /* Center horizontally, add 25px margin below */
+    opacity: 0.8; /* Slightly transparent */
+}
+/* --- End Welcome Logo Styling --- */
+
+
 /* Styles the area displayed when an incoming chat request is received. */
 #incoming-request-area {
     padding: 20px; /* Inner spacing */
     border: 1px dashed var(--border-color-info); /* Dashed border */
-    margin: 30px auto; /* Top/bottom margin, centered horizontally */
+    /* margin: 30px auto; REMOVED - Use absolute positioning */
     background-color: var(--bg-info); /* Info background color */
     text-align: center; /* Center text */
     max-width: 450px; /* Limit width */
+    width: 90%; /* Responsive width */
     border-radius: 5px; /* Rounded corners */
     color: var(--text-info); /* Info text color */
     /* display: none; */ /* Initially hidden/shown by JS */
+    position: absolute; /* Position relative to #main-content */
+    top: 50%;           /* Center vertically */
+    left: 50%;          /* Center horizontally */
+    transform: translate(-50%, -50%); /* Fine-tune centering */
+    z-index: 10; /* Position it above the overlay */
 }
 /* Styles buttons within the incoming request area. */
 #incoming-request-area button {
@@ -333,9 +370,15 @@ body {
     background-color: var(--bg-danger-info); /* Danger info background */
     color: var(--text-light); /* Standard light text */
     text-align: center; /* Center text */
-    margin: 30px auto; /* Top/bottom margin, centered horizontally */
+    /* margin: 30px auto; REMOVED - Use absolute positioning */
     max-width: 450px; /* Limit width */
+    width: 90%; /* Responsive width */
     border-radius: 5px; /* Rounded corners */
+    position: absolute; /* Position relative to #main-content */
+    top: 50%;           /* Center vertically */
+    left: 50%;          /* Center horizontally */
+    transform: translate(-50%, -50%); /* Fine-tune centering */
+    z-index: 10; /* Position it above the overlay */
 }
 /* Styles paragraphs within the info area. */
 #info-area p {
@@ -360,9 +403,15 @@ body {
     background-color: var(--bg-info); /* Info background color */
     color: var(--text-info); /* Info text color */
     text-align: center; /* Center text */
-    margin: 30px auto; /* Top/bottom margin, centered horizontally */
+    /* margin: 30px auto; REMOVED - Use absolute positioning */
     max-width: 450px; /* Limit width */
+    width: 90%; /* Responsive width */
     border-radius: 5px; /* Rounded corners */
+    position: absolute; /* Position relative to #main-content */
+    top: 50%;           /* Center vertically */
+    left: 50%;          /* Center horizontally */
+    transform: translate(-50%, -50%); /* Fine-tune centering */
+    z-index: 10; /* Position it above the overlay */
 }
 /* Styles paragraphs within the waiting area. */
 #waiting-response-area p {
@@ -382,6 +431,8 @@ body {
     display: none; /* Hidden by default, shown by JS when a chat is active */
     flex-direction: column; /* Stack header, messages, input vertically */
     overflow: hidden; /* Prevent content overflow */
+    position: relative; /* Ensure it participates in stacking context */
+    z-index: 1; /* Position it normally (no overlay needed) */
 }
 
 /* Styles the header within the active chat area (shows peer ID, disconnect button). */

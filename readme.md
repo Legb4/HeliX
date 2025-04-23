@@ -141,10 +141,11 @@ Before setting up HeliX, ensure you have the following:
     │
     ├── client/                # Contains all client-side browser code
     │   ├── index.html         # Main HTML file for the client interface
+    │   ├── favicon.ico        # Browser tab/bookmark icon
     │   ├── css/
     │   │   └── style.css      # Stylesheet for the client interface
     │   └── js/
-    │       ├── config.js          # Client configuration (e.g., WebSocket URL)
+    │       ├── config.js          # Client configuration (e.g., WebSocket URL, DEBUG flag)
     │       ├── CryptoModule.js    # Handles cryptographic operations (Web Crypto API)
     │       ├── main.js            # Main client execution script, initializes components
     │       ├── Session.js         # Represents a single chat session with a peer
@@ -153,7 +154,7 @@ Before setting up HeliX, ensure you have the following:
     │       └── WebSocketClient.js # Manages the WebSocket connection and message handling
     │
     └── server/                # Contains all server-side Python code
-        ├── config.py          # Server configuration (WSS/HTTPS Host/Port)
+        ├── config.py          # Server configuration (WSS/HTTPS Host/Port, DEBUG flag)
         ├── main.py            # Entry point for the WSS server process
         ├── requirements.txt   # Lists Python dependencies (currently just 'websockets')
         └── server.py          # Core WSS server logic (connection handling, message relay)
@@ -167,19 +168,19 @@ Before setting up HeliX, ensure you have the following:
         ```
 
 4.  **Dependency Check:**
-    *   The script will automatically check if the required `websockets` Python library is installed.
-    *   If not found, it will prompt you to install it using `pip`. Enter `y` to allow installation.
+    *   The script will automatically check if the required Python packages listed in `server/requirements.txt` are installed.
+    *   If not found, it will prompt you to install them using `pip`. Enter `y` to allow installation.
 
-5.  **Install `mkcert` & Generate Certificates (Using Menu Option 5):**
-    *   The manager script requires TLS certificates (`cert.pem`, `key.pem`) in the `certs/` directory to run the HTTPS server. Use **Menu Option 5** ("Manage TLS Certificates") to handle this *before* starting the servers.
-    *   **`mkcert` Setup (Do this *before* selecting Menu Option 5):**
+5.  **Install `mkcert` & Generate Certificates (Using Menu Option 7):**
+    *   The manager script requires TLS certificates (`cert.pem`, `key.pem`) in the `certs/` directory to run the HTTPS server. Use **Menu Option 7** ("Manage TLS Certificates") to handle this *before* starting the servers.
+    *   **`mkcert` Setup (Do this *before* selecting Menu Option 7):**
         *   **Windows:** Install via `winget install mkcert` or `choco install mkcert`, OR download `mkcert-vX.Y.Z-windows-amd64.exe`, rename it to `mkcert.exe`, and place it **inside the `helix/certs/` directory**. Ensure it's runnable.
         *   **Linux/macOS:** Install `mkcert` using your system's package manager so it's available in your PATH. Examples:
             *   macOS (using Homebrew): `brew install mkcert`
             *   Linux (Debian/Ubuntu): `sudo apt update && sudo apt install mkcert`
             *   Linux (Other): Consult your distribution's package manager or the mkcert documentation.
-    *   **Running Menu Option 5:**
-        *   Select option 5 from the manager menu.
+    *   **Running Menu Option 7:**
+        *   Select option 7 from the manager menu.
         *   The script will find `mkcert`.
         *   It will display the `mkcert` version found.
         *   **CA Installation:** It will ask if you want to run `mkcert -install`. **Recommended:** Enter `y`. This installs the `mkcert` local CA into your trust stores, preventing most browser warnings for `https://localhost` or `https://127.0.0.1`. Requires Admin/Sudo privileges.
@@ -199,15 +200,20 @@ Before setting up HeliX, ensure you have the following:
 
 1.  **Start the Servers:**
     *   Run the manager script: `python helix_manager.py`
-    *   Use the menu (options 1-4) to configure ports/hosts if desired.
-    *   Ensure certificates exist (use Menu Option 5 if needed).
-    *   Choose a start option:
-        *   **Option 6:** Save current config to `server/config.py` and start servers.
-        *   **Option 7:** Start servers using current settings without saving.
+    *   Use the menu (options 1-6) to configure ports, hosts, or debug modes if desired.
+        *   **Options 1-2:** Configure WSS Host/Port (saved to `server/config.py`).
+        *   **Options 3-4:** Configure HTTPS Host/Port (for this manager session only).
+        *   **Option 5:** Toggle Server Debug Logging (saved to `server/config.py`). Enables verbose server console logs.
+        *   **Option 6:** Toggle Client Debug Logging (saved to `client/js/config.js`). Enables verbose browser console logs.
+    *   Ensure certificates exist (use Menu Option 7 if needed).
+    *   Choose **Option 8** Start Servers. This will:
+        *   Silently save the current WSS Host, WSS Port, and Server Debug settings to `server/config.py`.
+        *   Silently save the current Client Debug setting to `client/js/config.js`.
+        *   Start both the WSS and HTTPS servers using the current settings.
 
 2.  **Expected Output:**
     *   You will see messages indicating the HTTPS server thread and WSS server subprocess are starting.
-    *   Real-time logs from the WSS server (connections, registrations, relays) will be printed, prefixed with `[WSS]`.
+    *   Real-time logs from the WSS server (connections, disconnections, errors, and potentially more if Server Debug is enabled) will be printed, prefixed with `[WSS]`.
     *   HTTPS server activity is logged to `logs/https_server.log`.
 
 3.  **Access the Client:**
@@ -230,8 +236,6 @@ Before setting up HeliX, ensure you have the following:
 
 ## Usage Guide
 
-*(This section remains the same as it describes the client-side interaction)*
-
 1.  **Access Client:** Open the correct `https://...` URL in your browser (see "Running HeliX").
 2.  **Registration:** Choose a unique temporary ID (3-30 chars, letters, numbers, -, \_) and click "Register".
 3.  **Main Interface:** Familiarize yourself with the Sidebar, Main Content area, and Status Bar.
@@ -247,11 +251,11 @@ Before setting up HeliX, ensure you have the following:
 
 ## Troubleshooting
 
-*   **`websockets` library not found:** Run `python helix_manager.py`. Allow install (`y`) or run `pip install websockets`.
+*   **Dependency Check Fails:** Ensure `server/requirements.txt` exists and is readable. Ensure `pip` is installed and in your PATH. Try running `pip install -r server/requirements.txt` manually.
 *   **`mkcert` not found:** Ensure `mkcert` is installed correctly and accessible. See "Installation & Setup" section 5.
 *   **Browser Certificate Warnings (NET::ERR_CERT_AUTHORITY_INVALID, etc.):**
     *   **Cause:** Browser doesn't trust `mkcert` CA, or accessing via IP/hostname not in cert.
-    *   **Solution 1 (Recommended):** Use Menu Option 5 -> `mkcert -install` (requires admin/sudo). Restart browser. Best for `localhost`/`127.0.0.1`.
+    *   **Solution 1 (Recommended):** Use Menu Option 7 -> `mkcert -install` (requires admin/sudo). Restart browser. Best for `localhost`/`127.0.0.1`.
     *   **Solution 2 (Bypass):** Click "Advanced" -> "Proceed to..." or "Accept Risk...".
     *   **Solution 3 (External/Domain):** Use a reverse proxy (advanced).
 *   **Cannot Connect to Server:**
@@ -259,11 +263,11 @@ Before setting up HeliX, ensure you have the following:
     *   Check WSS/HTTPS ports match browser URL and client config (`js/config.js`).
     *   Check OS firewall rules on server.
     *   If using LAN IP, ensure it's correct.
-*   **Cannot Connect from Outside LAN:** Verify firewall rules *and* router port forwarding. See "Installation & Setup" section 7.
+*   **Cannot Connect from Outside LAN:** Verify firewall rules *and* router port forwarding. See "Installation & Setup" section 6.
 *   **Registration Failed ("Identifier already taken" or "Invalid identifier format"):** Choose a different temporary ID matching the required format (3-30 chars, letters, numbers, -, \_).
 *   **Chat Request Failed ("User '...' is unavailable."):** Verify peer's ID and ensure they are online and registered. The peer might have disconnected.
 *   **Port Conflict ("Address already in use"):** Stop the other application or configure HeliX to use different ports via the manager menu (Options 1-4).
-*   **Handshake Timeout:** If the connection hangs during initiation, check console logs on both clients and the server for errors. Network latency or firewall issues could interfere.
+*   **Handshake Timeout:** If the connection hangs during initiation, check console logs on both clients (enable Client Debug via manager option 6) and the server (enable Server Debug via manager option 5) for errors. Network latency or firewall issues could interfere.
 *   **Disconnected by Server (Rate Limit):** If you see an alert about being disconnected for exceeding the rate limit, you sent too many messages too quickly. Wait a moment and reconnect.
 
 ---

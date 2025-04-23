@@ -11,7 +11,7 @@ import json             # For parsing and serializing JSON messages between clie
 import ssl              # For creating SSL contexts if WSS (Secure WebSockets) is enabled.
 import time             # For rate limiting timestamps
 import re               # For identifier validation using regex
-import config           # Imports server configuration (HOST, PORT, SSL settings, Rate Limits).
+import config           # Imports server configuration (HOST, PORT, SSL settings, Rate Limits, DEBUG).
 
 
 # Configure basic logging (can also be done in main.py, ensures it's set).
@@ -58,7 +58,7 @@ ACTIVE_SESSIONS = {}
 async def send_json(websocket, message_type, payload):
     """
     Helper function to format a message as JSON and send it over a WebSocket connection.
-    Handles JSON serialization and logs the outgoing message.
+    Handles JSON serialization and logs the outgoing message (if DEBUG is True).
     Includes basic error handling for closed connections during send.
 
     Args:
@@ -71,15 +71,18 @@ async def send_json(websocket, message_type, payload):
         message_dict = {"type": message_type, "payload": payload}
         # Serialize the dictionary to a JSON string.
         message = json.dumps(message_dict)
-        # Log the message being sent, including recipient address and ID (if registered).
-        logging.info(f"Sending to {websocket.remote_address} ({CONNECTIONS.get(websocket, 'N/A')}): {message}")
+        # Log the message being sent only if DEBUG is enabled.
+        if config.DEBUG:
+            logging.info(f"Sending to {websocket.remote_address} ({CONNECTIONS.get(websocket, 'N/A')}): {message}")
         # Send the JSON string over the WebSocket.
         await websocket.send(message)
     except websockets.exceptions.ConnectionClosed as e:
         # Log a warning specifically if the send fails because the connection is already closed.
+        # This warning is important regardless of DEBUG level.
         logging.warning(f"Failed to send to {websocket.remote_address} ({CONNECTIONS.get(websocket, 'N/A')}) because connection is closed: {e}")
     except Exception as e:
         # Catch other exceptions during json.dumps or websocket.send (less common)
+        # Always log unexpected exceptions.
         logging.exception(f"Unexpected error sending JSON to {websocket.remote_address} ({CONNECTIONS.get(websocket, 'N/A')})")
 
 
@@ -97,11 +100,14 @@ async def handle_registration(websocket, identifier):
         identifier: The validated identifier string provided by the client.
     """
     client_address = websocket.remote_address
-    logging.info(f"Handling registration request for '{identifier}' from {client_address}")
+    # Log handling attempt only if DEBUG is enabled.
+    if config.DEBUG:
+        logging.info(f"Handling registration request for '{identifier}' from {client_address}")
 
     # --- Check Availability ---
     # Check if the requested identifier is already present in the CLIENTS registry.
     if identifier in CLIENTS:
+        # Always log warnings about failed registrations.
         logging.warning(f"Identifier '{identifier}' already taken. Denying request from {client_address}.")
         # Send failure message (Type 0.2) indicating the ID is taken.
         await send_json(websocket, 0.2, {"identifier": identifier, "error": "Identifier already taken."})
@@ -109,6 +115,7 @@ async def handle_registration(websocket, identifier):
     elif websocket in CONNECTIONS:
          # This prevents a single client from registering multiple IDs.
          existing_id = CONNECTIONS[websocket]
+         # Always log warnings about failed registrations.
          logging.warning(f"Client {client_address} tried to register '{identifier}' but is already registered as '{existing_id}'. Denying.")
          # Send failure message (Type 0.2) indicating they are already registered.
          await send_json(websocket, 0.2, {"identifier": identifier, "error": f"You are already registered as '{existing_id}'."})
@@ -118,6 +125,7 @@ async def handle_registration(websocket, identifier):
         CLIENTS[identifier] = websocket
         # Add the websocket -> identifier mapping to CONNECTIONS.
         CONNECTIONS[websocket] = identifier
+        # Log successful registration (important event, not wrapped in DEBUG).
         logging.info(f"Identifier '{identifier}' registered successfully for {client_address}")
         # Send success message (Type 0.1) back to the client.
         await send_json(websocket, 0.1, {"identifier": identifier, "message": "Registration successful."})
@@ -140,6 +148,7 @@ def unregister_client(websocket):
     if websocket in CONNECTIONS:
         # Retrieve the identifier associated with this connection.
         identifier = CONNECTIONS[websocket]
+        # Log unregistration (important event, not wrapped in DEBUG).
         logging.info(f"Unregistering client {websocket.remote_address} with ID '{identifier}'")
 
         # --- BEGIN Disconnect Notification Logic ---
@@ -148,19 +157,25 @@ def unregister_client(websocket):
             peer_id = ACTIVE_SESSIONS.pop(identifier, None) # Get peer and remove sender's entry
             if peer_id and peer_id in ACTIVE_SESSIONS:
                 ACTIVE_SESSIONS.pop(peer_id, None) # Remove peer's entry if it exists
-            logging.info(f"Cleared active session tracking for {identifier} and {peer_id}")
+            # Log session clearing only if DEBUG is enabled.
+            if config.DEBUG:
+                logging.info(f"Cleared active session tracking for {identifier} and {peer_id}")
 
             # If a peer was found, try to notify them.
             if peer_id:
                 peer_websocket = CLIENTS.get(peer_id)
                 if peer_websocket: # Check if the peer is still connected
-                    logging.info(f"Notifying peer {peer_id} about {identifier}'s disconnection.")
+                    # Log notification attempt only if DEBUG is enabled.
+                    if config.DEBUG:
+                        logging.info(f"Notifying peer {peer_id} about {identifier}'s disconnection.")
                     # Construct the Type 9 payload (Session End)
                     notification_payload = {"targetId": peer_id, "senderId": identifier}
                     # Schedule the send operation as a task so it doesn't block unregister_client
                     asyncio.create_task(send_json(peer_websocket, 9, notification_payload))
                 else:
-                    logging.info(f"Peer {peer_id} was already disconnected. No notification sent.")
+                    # Log peer already disconnected only if DEBUG is enabled.
+                    if config.DEBUG:
+                        logging.info(f"Peer {peer_id} was already disconnected. No notification sent.")
         # --- END Disconnect Notification Logic ---
 
         # Remove the entry from the CLIENTS registry (ID -> connection).
@@ -170,7 +185,7 @@ def unregister_client(websocket):
         del CONNECTIONS[websocket] # Do this after potentially using the identifier
 
     else:
-        # Log if a client disconnects without ever registering an ID.
+        # Log if a client disconnects without ever registering an ID (important event, not wrapped).
         logging.info(f"Client {websocket.remote_address} disconnected but had no registered ID.")
 
 
@@ -186,6 +201,7 @@ async def connection_handler(websocket):
         websocket: The websockets.WebSocketServerProtocol object representing the connected client.
     """
     client_ip = websocket.remote_address[0] # Get IP address (index 0 of the tuple)
+    # Log connection attempt (important event, not wrapped).
     logging.info(f"Client attempting connection from {client_ip}:{websocket.remote_address[1]}")
 
     # --- Connection Rate Limiting ---
@@ -196,6 +212,7 @@ async def connection_handler(websocket):
     valid_attempts = [t for t in connection_times if current_time - t < config.CONNECTION_WINDOW_SECONDS]
     # Check if the number of valid recent attempts exceeds the limit.
     if len(valid_attempts) >= config.MAX_CONNECTIONS_PER_IP:
+        # Always log rate limit warnings.
         logging.warning(f"Connection rate limit exceeded for IP {client_ip}. Closing connection.")
         # Close the connection immediately with a specific code (e.g., 1008 Policy Violation).
         await websocket.close(code=1008, reason="Connection rate limit exceeded")
@@ -206,6 +223,7 @@ async def connection_handler(websocket):
         # If limit not exceeded, add the current timestamp and update the dictionary.
         valid_attempts.append(current_time)
         CONNECTION_ATTEMPTS[client_ip] = valid_attempts
+        # Log connection acceptance (important event, not wrapped).
         logging.info(f"Connection accepted from {client_ip}:{websocket.remote_address[1]}")
         # Initialize message timestamp tracking for this new connection
         MESSAGE_TIMESTAMPS[websocket] = []
@@ -223,6 +241,7 @@ async def connection_handler(websocket):
             valid_message_times = [t for t in message_times if current_time - t < config.MESSAGE_WINDOW_SECONDS]
             # Check if the limit is exceeded.
             if len(valid_message_times) >= config.MAX_MESSAGES_PER_CONNECTION:
+                # Always log rate limit warnings.
                 logging.warning(f"Message rate limit exceeded for {websocket.remote_address} ({CONNECTIONS.get(websocket, 'Unregistered')}). Sending notification and closing connection.")
                 # Send Type -2 error message to the client before closing.
                 error_payload = {"error": "Message rate limit exceeded. Disconnecting."}
@@ -235,8 +254,9 @@ async def connection_handler(websocket):
                 valid_message_times.append(current_time)
                 MESSAGE_TIMESTAMPS[websocket] = valid_message_times
 
-            # Log the raw message received, including the client's ID if registered.
-            logging.info(f"Raw message received from {websocket.remote_address} ({CONNECTIONS.get(websocket, 'Unregistered')}): {message}")
+            # Log the raw message received only if DEBUG is enabled.
+            if config.DEBUG:
+                logging.info(f"Raw message received from {websocket.remote_address} ({CONNECTIONS.get(websocket, 'Unregistered')}): {message}")
 
             try:
                 # --- Message Parsing and Stricter Validation ---
@@ -244,23 +264,27 @@ async def connection_handler(websocket):
                 try:
                     data = json.loads(message)
                 except json.JSONDecodeError:
+                    # Always log JSON errors as warnings.
                     logging.warning(f"Invalid JSON received from {websocket.remote_address}. Ignoring.")
                     continue # Skip to the next message
 
                 # Basic structure validation
                 if not isinstance(data, dict):
+                    # Always log structure errors as warnings.
                     logging.warning(f"Received non-dictionary data from {websocket.remote_address}. Ignoring: {data}")
                     continue
                 message_type = data.get("type")
                 payload = data.get("payload")
                 if message_type is None or payload is None:
+                    # Always log structure errors as warnings.
                     logging.warning(f"Missing 'type' or 'payload' in message from {websocket.remote_address}. Ignoring: {data}")
                     continue
                 if not isinstance(message_type, (int, float)): # Allow numeric types
+                    # Always log type errors as warnings.
                     logging.warning(f"Invalid 'type' (not a number) in message from {websocket.remote_address}. Ignoring: {data}")
                     continue
                 if not isinstance(payload, dict):
-                     # Allow non-dict payloads only for specific types if needed in future, otherwise enforce dict
+                     # Always log payload type errors as warnings.
                      logging.warning(f"Invalid 'payload' (not a dictionary) in message from {websocket.remote_address}. Ignoring: {data}")
                      continue
 
@@ -273,12 +297,14 @@ async def connection_handler(websocket):
                     identifier = payload.get("identifier")
                     # Check type and existence first
                     if not identifier or not isinstance(identifier, str):
+                         # Always log validation warnings.
                          logging.warning(f"Invalid identifier type in Type 0 payload from {websocket.remote_address}. Ignoring: {payload}")
                          validation_passed = False
                          # Send error back immediately if basic type is wrong
                          await send_json(websocket, 0.2, {"identifier": identifier, "error": "Identifier must be a non-empty string."})
                     # Then check format using regex
                     elif not VALID_IDENTIFIER_REGEX.match(identifier):
+                        # Always log validation warnings.
                         logging.warning(f"Invalid identifier format in Type 0 payload from {websocket.remote_address}. Sending error back.")
                         # Send Type 0.2 error immediately upon detecting invalid format
                         error_msg = "Invalid identifier format. Must be 3-30 characters, start with a letter/number, and contain only letters, numbers, underscores, or hyphens."
@@ -288,59 +314,73 @@ async def connection_handler(websocket):
                 # --- PFS Payload Validation ---
                 elif message_type in [1, 3, 7, 9, 10, 11]: # Types with simple target/sender payload
                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        # Always log validation warnings.
                         logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                     elif sender_id: # Check sender consistency only if registered
                         payload_sender_id = payload.get("senderId")
                         if not payload_sender_id or payload_sender_id != sender_id:
+                             # Always log validation warnings.
                              logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
                              validation_passed = False
                 elif message_type in [2, 4]: # Types carrying a public key
                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        # Always log validation warnings.
                         logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                     elif not payload.get("publicKey") or not isinstance(payload.get("publicKey"), str):
+                        # Always log validation warnings.
                         logging.warning(f"Missing or invalid 'publicKey' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                     elif sender_id: # Check sender consistency only if registered
                         payload_sender_id = payload.get("senderId")
                         if not payload_sender_id or payload_sender_id != sender_id:
+                             # Always log validation warnings.
                              logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
                              validation_passed = False
                 elif message_type == 5: # Challenge
                      if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        # Always log validation warnings.
                         logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                      elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'encryptedChallenge']):
+                        # Always log validation warnings.
                         logging.warning(f"Missing or invalid fields in Type 5 payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                      elif sender_id: # Check sender consistency only if registered
                         payload_sender_id = payload.get("senderId")
                         if not payload_sender_id or payload_sender_id != sender_id:
+                             # Always log validation warnings.
                              logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
                              validation_passed = False
                 elif message_type == 6: # Challenge Response
                      if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        # Always log validation warnings.
                         logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                      elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'encryptedResponse']):
+                        # Always log validation warnings.
                         logging.warning(f"Missing or invalid fields in Type 6 payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                      elif sender_id: # Check sender consistency only if registered
                         payload_sender_id = payload.get("senderId")
                         if not payload_sender_id or payload_sender_id != sender_id:
+                             # Always log validation warnings.
                              logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
                              validation_passed = False
                 elif message_type == 8: # Encrypted Message
                      if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
+                        # Always log validation warnings.
                         logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                      elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'data']): # Check for 'data', not 'encryptedKey'
+                        # Always log validation warnings.
                         logging.warning(f"Missing or invalid fields in Type 8 payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
                      elif sender_id: # Check sender consistency only if registered
                         payload_sender_id = payload.get("senderId")
                         if not payload_sender_id or payload_sender_id != sender_id:
+                             # Always log validation warnings.
                              logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
                              validation_passed = False
                 # --- End PFS Payload Validation ---
@@ -355,27 +395,35 @@ async def connection_handler(websocket):
                 # --- Message Relaying (for registered clients) ---
                 elif sender_id: # Check if the sender is registered.
                     # Target ID already extracted and validated above.
-                    logging.info(f"Attempting to relay message type {message_type} from '{sender_id}' to '{target_id}'")
+                    # Log relay attempt only if DEBUG is enabled.
+                    if config.DEBUG:
+                        logging.info(f"Attempting to relay message type {message_type} from '{sender_id}' to '{target_id}'")
                     # Look up the target client's WebSocket connection using their ID.
                     target_websocket = CLIENTS.get(target_id)
 
                     # --- Relay Logic ---
                     if target_websocket: # Check if the target client is currently connected and registered.
                         try:
-                            logging.info(f"Relaying message to {target_id} ({target_websocket.remote_address})")
+                            # Log successful relay only if DEBUG is enabled.
+                            if config.DEBUG:
+                                logging.info(f"Relaying message to {target_id} ({target_websocket.remote_address})")
                             # Send the original, validated JSON message string to the target client.
                             await target_websocket.send(message)
 
                             # --- BEGIN Session Tracking Update ---
                             # If a Type 2 (Accept) is successfully relayed, record the session.
                             if message_type == 2:
-                                logging.info(f"Recording active session between {sender_id} and {target_id}")
+                                # Log session recording only if DEBUG is enabled.
+                                if config.DEBUG:
+                                    logging.info(f"Recording active session between {sender_id} and {target_id}")
                                 ACTIVE_SESSIONS[sender_id] = target_id
                                 ACTIVE_SESSIONS[target_id] = sender_id # Record the reverse mapping too
 
                             # If a Type 9 (End Session) is successfully relayed, clear the session.
                             elif message_type == 9:
-                                logging.info(f"Clearing active session between {sender_id} and {target_id} due to Type 9 message relay.")
+                                # Log session clearing only if DEBUG is enabled.
+                                if config.DEBUG:
+                                    logging.info(f"Clearing active session between {sender_id} and {target_id} due to Type 9 message relay.")
                                 if sender_id in ACTIVE_SESSIONS:
                                     # Check if the stored peer matches the target before deleting
                                     if ACTIVE_SESSIONS[sender_id] == target_id:
@@ -388,52 +436,59 @@ async def connection_handler(websocket):
 
                         except websockets.exceptions.ConnectionClosed:
                             # Handle the case where the target client disconnected *during* the send attempt.
+                            # Always log this warning.
                             logging.warning(f"Relay failed: Target user '{target_id}' connection closed during send attempt.")
                             # Send standardized error message (Type -1) back to the original sender.
                             error_payload = {"targetId": target_id, "message": f"User '{target_id}' is unavailable."} # Standardized message
                             await send_json(websocket, -1, error_payload)
                         except Exception as e:
                              # Catch any other unexpected errors during the relay send.
+                             # Always log unexpected exceptions.
                              logging.exception(f"Unexpected error relaying message to {target_id}")
                              # Consider sending an error back to the sender here as well, if appropriate.
                     else:
                         # Target client ID not found in the CLIENTS registry (not online or never registered).
+                        # Always log this warning.
                         logging.warning(f"Target user '{target_id}' not found. Sending error back to '{sender_id}'.")
                         # Send standardized error message (Type -1) back to the original sender.
                         error_payload = {"targetId": target_id, "message": f"User '{target_id}' is unavailable."} # Standardized message
                         await send_json(websocket, -1, error_payload)
                 else:
                     # Received a non-registration message from a client that hasn't registered yet.
+                    # Always log this warning.
                     logging.warning(f"Received non-registration message type {message_type} from unregistered client {websocket.remote_address}. Ignoring.")
 
             except Exception as e:
                 # Catch any other errors that occur during the processing of a single message
                 # (e.g., unexpected payload structure, errors in handlers).
+                # Always log unexpected exceptions.
                 logging.exception(f"Error processing message from {websocket.remote_address} ({CONNECTIONS.get(websocket, 'Unregistered')}): {message}")
                 # Consider sending a generic error back to the client if appropriate.
 
     # --- Connection Closed Handling ---
     except websockets.exceptions.ConnectionClosedOK:
-        # Log when a client disconnects cleanly (e.g., browser closed, client called disconnect).
+        # Log when a client disconnects cleanly (important event, not wrapped).
         logging.info(f"Client {websocket.remote_address} disconnected gracefully.")
     except websockets.exceptions.ConnectionClosedError as e:
-        # Log when a client disconnects due to an error (e.g., network interruption).
+        # Log when a client disconnects due to an error (important event, not wrapped).
         logging.info(f"Client {websocket.remote_address} disconnected with error: {e}")
     except Exception as e:
         # Catch any unexpected errors in the main connection handling loop itself
         # (outside the message processing loop).
+        # Always log unexpected exceptions.
         logging.exception(f"An unexpected error occurred handling client {websocket.remote_address}")
     finally:
         # --- Cleanup ---
         # Remove message rate limiting data for this connection
         if websocket in MESSAGE_TIMESTAMPS:
             del MESSAGE_TIMESTAMPS[websocket]
-            logging.debug(f"Removed message timestamp tracking for {websocket.remote_address}")
+            # Log cleanup only if DEBUG is enabled.
+            if config.DEBUG:
+                logging.info(f"Removed message timestamp tracking for {websocket.remote_address}")
         # Ensure the client is unregistered from the global registries AND handle disconnect notification.
         unregister_client(websocket) # This now includes the notification logic
+        # Log connection closed (important event, not wrapped).
         logging.info(f"Connection closed for {websocket.remote_address}")
-        # Optional: Log exit from the handler for clarity during debugging.
-        # logging.info(f"--- Exiting connection_handler for {websocket.remote_address} ---")
 
 
 # --- Server Startup Function ---
@@ -474,9 +529,17 @@ async def start_server(host, port):
 
     # Determine the effective protocol based on whether SSL context was successfully created.
     effective_protocol = "wss" if ssl_context else "ws"
+    # Log essential startup info.
     logging.info(f"Starting server on {effective_protocol}://{host}:{port}")
     logging.info(f"Connection Rate Limit: {config.MAX_CONNECTIONS_PER_IP} per {config.CONNECTION_WINDOW_SECONDS}s per IP")
     logging.info(f"Message Rate Limit: {config.MAX_MESSAGES_PER_CONNECTION} per {config.MESSAGE_WINDOW_SECONDS}s per Connection")
+
+    # Define the maximum message size (e.g., 1MB = 1024 * 1024 bytes)
+    # This value could potentially be moved to config.py if desired
+    MAX_MESSAGE_SIZE = 1024 * 1024
+    logging.info(f"Maximum WebSocket message size: {MAX_MESSAGE_SIZE} bytes") # Log the max size being used
+    # Log debug status
+    logging.info(f"Server Debug Logging: {'ENABLED' if config.DEBUG else 'DISABLED'}")
 
 
     try:
@@ -485,18 +548,19 @@ async def start_server(host, port):
         # - host: The host address to listen on.
         # - port: The port number to listen on.
         # - ssl: Pass the created SSL context here if using WSS, otherwise None for WS.
+        # - max_size: Set the maximum allowed size for incoming messages in bytes.
         async with websockets.serve(
             connection_handler,
             host,
             port,
-            ssl=ssl_context # Pass the context (or None)
+            ssl=ssl_context, # Pass the context (or None)
+            max_size=MAX_MESSAGE_SIZE # Add the max_size parameter
         ) as server_instance:
             # Keep the server running indefinitely by awaiting a Future that never completes.
             # The server will run until the process is interrupted (e.g., Ctrl+C).
             await asyncio.Future()
     except OSError as e:
         # Catch common OS-level errors during server startup.
-        # e.g., "Address already in use" if the port is taken, or permission errors.
         logging.exception(f"OSError starting server on {host}:{port}")
     except Exception as e:
         # Catch any other unexpected errors during server startup or runtime.

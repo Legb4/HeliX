@@ -7,6 +7,7 @@
  * to application logic, and starts the WebSocket connection.
  */
 document.addEventListener('DOMContentLoaded', () => {
+    // Log DOM loaded (not wrapped in DEBUG as it's fundamental)
     console.log('DOM fully loaded.');
 
     // --- 1. Initialize Core Components ---
@@ -40,7 +41,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (isFinalDisconnect) {
             // If it's a final disconnect state, tell the SessionManager to clean up all sessions
             // and reset the application state (e.g., show registration).
-            console.log(`StatusListener: Detected final disconnect/failure state: "${status}". Calling handleDisconnection.`);
+            // Log disconnect handling only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log(`StatusListener: Detected final disconnect/failure state: "${status}". Calling handleDisconnection.`);
+            }
             sessionManager.handleDisconnection();
         } else if (status === 'Connected' && sessionManager.managerState !== sessionManager.STATE_REGISTERED) {
             // If the WebSocket connects (or reconnects) but the user isn't registered yet
@@ -109,6 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sessionManager.acceptRequest(sessionManager.pendingPeerIdForAction);
         } else {
             // Should not happen in normal flow, but log if it does.
+            // Always log this error.
             console.error("UIController: Accept clicked, but no pendingPeerIdForAction set.");
         }
     });
@@ -119,6 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sessionManager.denyRequest(sessionManager.pendingPeerIdForAction);
         } else {
             // Should not happen in normal flow, but log if it does.
+            // Always log this error.
             console.error("UIController: Deny clicked, but no pendingPeerIdForAction set.");
         }
     });
@@ -126,21 +132,24 @@ document.addEventListener('DOMContentLoaded', () => {
     // Close Info Message (Denial/Timeout): Bind the close button in the info pane.
     // The handler receives the peerId associated with the info message (stored in button's dataset).
     uiController.bindCloseInfoButton((peerId) => {
-        console.log(`Close info button clicked for peer: ${peerId}`);
+        // Log button click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Close info button clicked for peer: ${peerId}`);
         sessionManager.closeInfoMessage(peerId); // Tell SessionManager to handle closing this state.
     });
 
     // Retry Request (After Timeout): Bind the retry button in the info pane.
     // The handler receives the peerId associated with the info message (stored in button's dataset).
     uiController.bindRetryRequestButton((peerId) => {
-        console.log(`Retry button clicked for peer: ${peerId}`);
+        // Log button click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Retry button clicked for peer: ${peerId}`);
         sessionManager.retryRequest(peerId); // Tell SessionManager to retry the request.
     });
 
     // Bind Cancel Request Button (While waiting for response).
     // The handler receives the peerId associated with the waiting pane (stored in button's dataset).
     uiController.bindCancelRequestButton((peerId) => {
-        console.log(`Cancel request button clicked for peer: ${peerId}`);
+        // Log button click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Cancel request button clicked for peer: ${peerId}`);
         sessionManager.cancelRequest(peerId); // Tell SessionManager to cancel the outgoing request.
     });
 
@@ -154,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
             uiController.clearMessageInput(); // Clear the input field
         } else if (!activePeerId) {
             // Log error if trying to send without an active chat.
+            // Always log this error.
             console.error("UIController: Cannot send message, no active chat selected.");
         }
     };
@@ -167,6 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
             sessionManager.endSession(activePeerId); // Tell SessionManager to end the session.
         } else {
             // Should not happen if button is only visible in active chat, but log if it does.
+            // Always log this error.
             console.error("UIController: Disconnect clicked, but no active chat selected.");
         }
     });
@@ -174,7 +185,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Bind Session List Clicks: Handle clicks on items in the session list (sidebar).
     // The handler receives the peerId associated with the clicked list item (stored in dataset).
     uiController.bindSessionListClick((peerId) => {
-        console.log(`Session list item clicked for peer: ${peerId}`);
+        // Log list click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session list item clicked for peer: ${peerId}`);
         sessionManager.switchToSessionView(peerId); // Tell SessionManager to switch the main view.
     });
 
@@ -194,7 +206,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // Note: Reliability of these events, especially `beforeunload`, can vary across browsers.
     // `pagehide` is generally more reliable for mobile and modern browsers.
     const handlePageUnload = (event) => {
-        console.log(`Page unload event triggered (${event.type}). Attempting cleanup.`);
+        // Log unload event only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Page unload event triggered (${event.type}). Attempting cleanup.`);
         // Tell SessionManager to send disconnect notifications (Type 9) to active peers.
         // This is a best-effort attempt.
         if (sessionManager) {
@@ -203,7 +216,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // Attempt a synchronous close of the WebSocket if it's open.
         // This helps signal the server immediately, though it might not always complete.
         if (webSocketClient.websocket && webSocketClient.websocket.readyState === WebSocket.OPEN) {
-             console.log("Attempting synchronous WebSocket close during unload.");
+             // Log synchronous close attempt only if DEBUG is enabled.
+             if (config.DEBUG) console.log("Attempting synchronous WebSocket close during unload.");
              // Use code 1001 (Going Away)
              webSocketClient.websocket.close(1001, "Client navigating away");
         }
@@ -220,6 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // --- Optional: Debugging Access ---
     // Expose the sessionManager instance globally for easier debugging in the browser console.
+    // Log this message regardless of DEBUG flag, as it's helpful for developers.
     window.sessionManager = sessionManager;
     console.log("Debug: Access 'sessionManager' in the browser console.");
 

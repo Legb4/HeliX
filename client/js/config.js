@@ -12,5 +12,19 @@ const config = {
      */
     // Use wss:// and the actual hostname/IP of your server
     // Ensure the port matches the WebSocket server port (e.g., 5678)
-    webSocketUrl: 'wss://localhost:5678'
+    webSocketUrl: 'wss://localhost:5678',
+
+    /**
+     * Debug Flag for Console Logging.
+     * - Set to `true` to enable detailed console logging for development and debugging.
+     *   This will output internal states, cryptographic steps, and other verbose information.
+     * - Set to `false` for production deployments to minimize information leakage
+     *   and keep the console cleaner. Essential errors (`console.error`, `console.warn`)
+     *   will still be logged regardless of this flag.
+     */
+    DEBUG: false,     // Default to false for production
 };
+
+// Make the config object globally accessible (if not using modules)
+// If using ES modules, you would export this object instead.
+// window.config = config; // Uncomment if needed in a non-module environment

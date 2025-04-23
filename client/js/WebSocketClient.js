@@ -44,7 +44,10 @@ class WebSocketClient {
         // Clear any previously scheduled reconnect attempt.
         this.clearReconnectTimeout();
 
-        console.log(`Attempting to connect to WebSocket server at ${this.url}... (Reconnect: ${isReconnectAttempt})`);
+        // Log connection attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log(`Attempting to connect to WebSocket server at ${this.url}... (Reconnect: ${isReconnectAttempt})`);
+        }
 
         // If this is a fresh connection attempt (not a reconnect), reset state.
         if (!isReconnectAttempt) {
@@ -57,7 +60,8 @@ class WebSocketClient {
 
         // If a WebSocket object already exists and isn't closed, close it cleanly first.
         if (this.websocket && this.websocket.readyState !== WebSocket.CLOSED) {
-            console.log("Closing existing WebSocket connection before connecting.");
+            // Log closure only if DEBUG is enabled.
+            if (config.DEBUG) console.log("Closing existing WebSocket connection before connecting.");
             // IMPORTANT: Remove listeners from the old socket *before* closing it
             // to prevent its handleClose method firing unexpectedly.
             this.removeListeners();
@@ -75,6 +79,7 @@ class WebSocketClient {
 
         } catch (error) {
             // Catch errors during WebSocket object creation (e.g., invalid URL format).
+            // Always log these errors.
             console.error("Error creating WebSocket connection:", error);
             this.updateStatus('Failed to connect (Initialization Error)');
             this.websocket = null; // Ensure websocket is null on failure.
@@ -122,6 +127,7 @@ class WebSocketClient {
             this.websocket.removeEventListener('error', this.handleError);
             this.websocket.removeEventListener('close', this.handleClose);
          } catch(e) {
+             // Always log warnings about listener removal errors.
              console.warn("Error removing listeners (socket might be null or already closed):", e);
          }
     }
@@ -136,6 +142,7 @@ class WebSocketClient {
      * @param {Event} event - The 'open' event object.
      */
     handleOpen(event) {
+        // Log connection established (not wrapped in DEBUG as it's significant).
         console.log('WebSocket connection established.');
         this.wasConnected = true; // Mark that we successfully connected at least once.
         this.reconnectAttempts = 0; // Reset reconnect counter on successful connection.
@@ -153,7 +160,7 @@ class WebSocketClient {
             // Pass the received data (event.data) to the callback function.
             this.messageListener(event.data);
         } else {
-            // Log if no listener is set up to handle the message.
+            // Always log warning if no listener is set.
             console.warn('No message listener registered for incoming message.');
         }
     }
@@ -165,6 +172,7 @@ class WebSocketClient {
      */
     handleError(event) {
         // Log the error event for debugging. Detailed handling is often done in handleClose.
+        // Always log WebSocket errors.
         console.error('WebSocket error observed:', event);
         // Potential enhancement: Update status based on specific error types if possible.
     }
@@ -176,6 +184,7 @@ class WebSocketClient {
      * @param {CloseEvent} event - The 'close' event object containing code, reason, wasClean.
      */
     handleClose(event) {
+        // Log closure details (not wrapped in DEBUG as it's significant).
         console.log(`WebSocket connection closed. Code: ${event.code}, Reason: "${event.reason}", Clean: ${event.wasClean}`);
 
         // Determine if the close was unexpected (abnormal).
@@ -201,6 +210,7 @@ class WebSocketClient {
             if (this.reconnectAttempts >= this.maxReconnectAttempts) {
                 // Max attempts reached.
                 statusMessage = "Connection Lost. Failed to reconnect.";
+                // Always log this error.
                 console.error("Max reconnect attempts reached. Giving up.");
             } else if (event.code === 1000) {
                 // Normal, clean closure (e.g., server shutdown, client disconnect).
@@ -242,6 +252,7 @@ class WebSocketClient {
      */
     attemptReconnect() {
         this.reconnectAttempts++;
+        // Log reconnect attempt (not wrapped in DEBUG as it's significant).
         console.log(`Connection lost/failed. Reconnect attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}.`);
 
         // Calculate delay in seconds for the status message.
@@ -251,7 +262,8 @@ class WebSocketClient {
 
         // Schedule the actual connect() call after the delay.
         this.reconnectTimeoutId = setTimeout(() => {
-            console.log(`Executing reconnect attempt ${this.reconnectAttempts}...`);
+            // Log execution of attempt only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`Executing reconnect attempt ${this.reconnectAttempts}...`);
             // Call connect again, marking it as a reconnect attempt.
             this.connect(true);
         }, this.reconnectDelay);
@@ -263,7 +275,8 @@ class WebSocketClient {
      */
     clearReconnectTimeout() {
         if (this.reconnectTimeoutId) {
-            console.log("Clearing pending reconnect attempt.");
+            // Log clearing only if DEBUG is enabled.
+            if (config.DEBUG) console.log("Clearing pending reconnect attempt.");
             clearTimeout(this.reconnectTimeoutId);
             this.reconnectTimeoutId = null;
         }
@@ -289,6 +302,7 @@ class WebSocketClient {
                 // Handle potential errors during stringification or sending.
                 if (error instanceof DOMException && error.name === 'InvalidStateError') {
                     // This specific error often means the connection closed unexpectedly between the readyState check and send().
+                    // Always log this error.
                     console.error('Failed to send message: WebSocket connection closed unexpectedly.', messageObject, error);
                     this.updateStatus("Error: Send Failed (Connection Lost?)");
                     // Manually trigger close handling logic if the 'close' event hasn't fired yet.
@@ -300,6 +314,7 @@ class WebSocketClient {
                     }
                 } else {
                     // Handle other errors (e.g., JSON stringification error).
+                    // Always log these errors.
                     console.error('Failed to stringify or send message:', messageObject, error);
                     this.updateStatus("Error: Failed to send message");
                 }
@@ -307,6 +322,7 @@ class WebSocketClient {
             }
         } else {
             // WebSocket is not connected or doesn't exist.
+            // Always log this error.
             console.error('WebSocket is not connected. Cannot send message.');
             this.updateStatus('Error: Not connected');
             return false; // Indicate failure.
@@ -324,7 +340,8 @@ class WebSocketClient {
         this.reconnectAttempts = 0; // Reset counter on manual disconnect.
 
         if (this.websocket) {
-            console.log(`Closing WebSocket connection manually. Reason: ${reason}`);
+            // Log manual closure only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`Closing WebSocket connection manually. Reason: ${reason}`);
             // Remove listeners *before* calling close on manual disconnect
             // to prevent the automatic reconnect logic in handleClose from firing.
             this.removeListeners();
@@ -335,14 +352,16 @@ class WebSocketClient {
                  // due to listener removal, or might fire with the wrong context if called later.
                  this.updateStatus("Disconnected");
             } else {
-                 console.log("WebSocket already closing or closed.");
+                 // Log already closed state only if DEBUG is enabled.
+                 if (config.DEBUG) console.log("WebSocket already closing or closed.");
                  // Status might have already been updated by handleClose.
             }
             // Nullify the reference after initiating close or confirming it's already closed/closing.
             this.websocket = null;
             this.wasConnected = false; // Ensure state reflects disconnect.
         } else {
-            console.log("Manual disconnect called but WebSocket does not exist.");
+            // Log attempt to disconnect non-existent socket only if DEBUG is enabled.
+            if (config.DEBUG) console.log("Manual disconnect called but WebSocket does not exist.");
             // Ensure status reflects disconnected state if called when already null/disconnected.
              if (this.statusListener) {
                  this.updateStatus("Disconnected");
@@ -376,7 +395,10 @@ class WebSocketClient {
             this.statusListener(status);
         } else {
             // Fallback to console logging if no listener is registered.
-            console.log(`WebSocket Status: ${status}`);
+            // Log status only if DEBUG is enabled (as UIController also logs it).
+            if (config.DEBUG) {
+                console.log(`WebSocket Status: ${status}`);
+            }
         }
     }
 }
