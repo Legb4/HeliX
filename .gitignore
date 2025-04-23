@@ -1,6 +1,6 @@
 # Python bytecode cache
 # Ignore all directories named __pycache__ and their contents, wherever they appear.
-__pycache__/
+server/__pycache__/
 
 # Generated TLS Certificates and Backups in the certs directory
 # Ignore all files ending in .pem within the certs/ directory.
