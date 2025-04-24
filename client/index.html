@@ -41,6 +41,20 @@
                 <input type="text" id="peer-id-input" placeholder="e.g., Bob456"> <!-- Input for the peer's ID -->
                 <button id="start-chat-button">Start Chat</button> <!-- Button to initiate the chat -->
             </div>
+
+            <!-- Sidebar Controls Area (for Mute/Settings Buttons) -->
+            <!-- This div holds controls like the mute button, placed below initiation and above session list. -->
+            <div id="sidebar-controls">
+                <button id="mute-button" title="Mute/Unmute Notifications">
+                    <span>🔊</span> <!-- Initial icon (Unmuted). JS will change this. -->
+                </button>
+                <button id="settings-button" title="Settings">
+                    <span>⚙️</span> <!-- Settings Gear Icon -->
+                </button>
+                <!-- Add other sidebar controls here if needed in the future -->
+            </div>
+            <!-- End Sidebar Controls Area -->
+
             <!-- Container for the list of active and pending chat sessions -->
             <div id="session-list-container">
                 <h2>Sessions</h2> <!-- Heading for the session list -->
@@ -56,9 +70,9 @@
         <!-- It now contains the overlay and all the content panes. -->
         <div id="main-content">
 
-            <!-- NEW: Overlay Element -->
+            <!-- Overlay Element -->
             <!-- This div will cover the main content area with a semi-transparent background -->
-            <!-- when modal-like panes (Info, Incoming Request) are shown. -->
+            <!-- when modal-like panes (Info, Incoming Request, Settings) are shown. -->
             <div id="overlay"></div>
             <!-- End Overlay Element -->
 
@@ -114,18 +128,45 @@
                 <div id="message-area">
                     <!-- Messages (divs) will be added here dynamically by JavaScript -->
                 </div>
-                <!-- *** NEW: Typing Indicator Area *** -->
+                <!-- Typing Indicator Area -->
                 <!-- This div holds the text indicating if the peer is currently typing. -->
                 <div id="typing-indicator-area" class="typing-indicator-area">
                     <span id="typing-indicator-text"></span> <!-- Text like "PeerID is typing..." appears here (controlled by JS/CSS) -->
                 </div>
-                <!-- ******************************** -->
                 <!-- Area containing the message input field and send button -->
                 <div id="message-input-area">
                     <input type="text" id="message-input" placeholder="Type your message..."> <!-- Input field for typing messages -->
                     <button id="send-button">Send</button> <!-- Button to send the typed message -->
                 </div>
             </div> <!-- End active-chat-area -->
+
+            <!-- NEW: Settings Pane -->
+            <!-- This pane allows users to configure application settings. -->
+            <!-- It appears *on top* of the overlay. Hidden by default. -->
+            <div id="settings-pane">
+                <h2>Settings</h2>
+                <div class="settings-section">
+                    <h3>Chat Appearance</h3>
+                    <div class="setting-item">
+                        <label for="font-family-select">Font Family:</label>
+                        <select id="font-family-select">
+                            <option value="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">System Default</option>
+                            <option value="Arial, sans-serif">Arial</option>
+                            <option value="'Times New Roman', Times, serif">Times New Roman</option>
+                            <option value="'Courier New', Courier, monospace">Courier New</option>
+                            <option value="Verdana, sans-serif">Verdana</option>
+                            <option value="Georgia, serif">Georgia</option>
+                        </select>
+                    </div>
+                    <div class="setting-item">
+                        <label for="font-size-input">Font Size (px):</label>
+                        <input type="number" id="font-size-input" min="10" max="24" value="15"> <!-- Default value set -->
+                    </div>
+                </div>
+                <!-- Add more settings sections here in the future -->
+                <button id="close-settings-button">Close</button>
+            </div>
+            <!-- End Settings Pane -->
 
         </div> <!-- End main-content -->
 

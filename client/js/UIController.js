@@ -5,13 +5,15 @@
  * This class is responsible for getting references to UI elements,
  * showing/hiding different sections of the application, updating text content,
  * enabling/disabling controls, adding/removing items from lists,
- * displaying messages, and binding event listeners to UI elements.
+ * displaying messages, playing sounds, managing settings UI,
+ * and binding event listeners to UI elements.
  * It acts as the presentation layer, controlled by the SessionManager.
  */
 class UIController {
     /**
-     * Initializes the UIController by getting references to all necessary DOM elements.
-     * Also sets the initial UI state (showing the registration area).
+     * Initializes the UIController by getting references to all necessary DOM elements,
+     * preloading notification and UI sounds, setting the initial mute state,
+     * applying initial chat styles, and setting the initial UI state.
      */
     constructor() {
         // --- Get References to Elements ---
@@ -33,6 +35,9 @@ class UIController {
         this.initiationArea = document.getElementById('initiation-area'); // Area to start new chat
         this.peerIdInput = document.getElementById('peer-id-input'); // Input for peer's ID
         this.startChatButton = document.getElementById('start-chat-button'); // Button to initiate chat
+        this.sidebarControls = document.getElementById('sidebar-controls'); // Container for sidebar buttons
+        this.muteButton = document.getElementById('mute-button'); // Mute button reference
+        this.settingsButton = document.getElementById('settings-button'); // NEW: Settings button reference
         this.sessionListContainer = document.getElementById('session-list-container'); // Container for session list
         this.sessionList = document.getElementById('session-list'); // The <ul> element for sessions
 
@@ -57,26 +62,70 @@ class UIController {
         this.peerIdentifierDisplay = document.getElementById('peer-identifier'); // Peer's ID display in chat header
         this.messageArea = document.getElementById('message-area'); // Area where messages are displayed
 
-        // --- NEW: Typing Indicator Elements ---
+        // Typing Indicator Elements
         this.typingIndicatorArea = document.getElementById('typing-indicator-area'); // Container below messages
         this.typingIndicatorText = document.getElementById('typing-indicator-text'); // The text span for "is typing..."
-        // ------------------------------------
 
         this.messageInputArea = document.getElementById('message-input-area'); // Container for input and send button
         this.messageInput = document.getElementById('message-input'); // The message text input field
         this.sendButton = document.getElementById('send-button'); // Send message button
         this.disconnectButton = document.getElementById('disconnect-button'); // Disconnect button in chat header
 
+        // NEW: Settings Pane Elements
+        this.settingsPane = document.getElementById('settings-pane');
+        this.fontFamilySelect = document.getElementById('font-family-select');
+        this.fontSizeInput = document.getElementById('font-size-input');
+        this.closeSettingsButton = document.getElementById('close-settings-button');
+        // ---------------------------
+
+        // --- Audio Management ---
+        // Object to hold preloaded Audio elements.
+        this.sounds = {};
+        // List of sound names and their file paths.
+        const soundFiles = {
+            'notification': 'audio/notification.mp3',
+            'begin': 'audio/begin.mp3',
+            'end': 'audio/end.mp3',
+            'error': 'audio/error.mp3',
+            'registered': 'audio/registered.mp3',
+            'receiverequest': 'audio/receiverequest.mp3',
+            'sendrequest': 'audio/sendrequest.mp3'
+        };
+
+        // Preload each sound file.
+        for (const name in soundFiles) {
+            try {
+                const audio = new Audio(soundFiles[name]);
+                audio.preload = 'auto'; // Suggest preloading
+                this.sounds[name] = audio; // Store the Audio object
+                // Log preloading attempt only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`UI: Preloading sound '${name}' from '${soundFiles[name]}'.`);
+            } catch (error) {
+                // Always log errors related to audio loading.
+                console.error(`UI: Failed to create Audio object for sound '${name}':`, error);
+                this.sounds[name] = null; // Set to null if creation failed.
+            }
+        }
+
+        // --- Mute State ---
+        // Tracks whether notification sounds should be played.
+        this.isMuted = false; // Start unmuted by default.
+        // -----------------------
+
         // --- Initial State ---
         // Set the initial visibility of UI sections.
         this.showRegistration();
+        // Set the initial mute button icon based on the default state.
+        this.updateMuteButtonIcon();
+        // Apply initial chat styles based on default settings values.
+        this.applyInitialChatStyles();
 
         // Log initialization (not wrapped in DEBUG as it's fundamental)
         console.log('UIController initialized.');
         // Validate that all expected elements were found in the DOM.
         if (!this.validateElements()) {
              // Always log validation errors.
-             console.error("!!! UIController failed validation - Some elements not found! Check HTML IDs.");
+             console.error("!!! UIController failed validation - Some elements not found or sounds failed to load! Check HTML IDs and audio paths.");
         }
     }
 
@@ -107,6 +156,7 @@ class UIController {
         if (this.activeChatArea) this.activeChatArea.style.display = 'none';
         if (this.infoArea) this.infoArea.style.display = 'none';
         if (this.waitingResponseArea) this.waitingResponseArea.style.display = 'none';
+        if (this.settingsPane) this.settingsPane.style.display = 'none'; // Hide settings pane too
         if (this.overlay) this.overlay.style.display = 'none'; // Hide overlay too
         // Also ensure the typing indicator is hidden when switching panes.
         this.hideTypingIndicator();
@@ -282,6 +332,54 @@ class UIController {
         this.setInfoControlsEnabled(false);
         this.setWaitingControlsEnabled(false);
     }
+
+    // --- NEW: Settings Pane Management ---
+    /**
+     * Shows the settings pane with the overlay effect.
+     * Populates the settings controls with current values.
+     */
+    showSettingsPane() {
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Showing Settings Pane");
+        this.hideAllMainPanes(); // Hide other panes first
+        if (this.welcomeMessage) this.welcomeMessage.style.display = 'block'; // Ensure welcome is visible behind overlay
+        if (this.overlay) this.overlay.style.display = 'block'; // Show the overlay
+        if (this.settingsPane) this.settingsPane.style.display = 'block'; // Show the settings pane on top
+
+        // Populate settings controls with current values
+        const currentStyles = this.getCurrentChatStyles();
+        if (this.fontFamilySelect) this.fontFamilySelect.value = currentStyles.fontFamily;
+        if (this.fontSizeInput) this.fontSizeInput.value = currentStyles.fontSize;
+
+        // Disable other potentially active controls
+        this.setChatControlsEnabled(false);
+        this.setIncomingRequestControlsEnabled(false);
+        this.setInfoControlsEnabled(false);
+        this.setWaitingControlsEnabled(false);
+        this.setInitiationControlsEnabled(true); // Keep initiation enabled
+        // Focus the close button
+        if (this.closeSettingsButton) { setTimeout(() => this.closeSettingsButton.focus(), 0); }
+    }
+
+    /**
+     * Hides the settings pane and the overlay.
+     * Shows the default registered view if no other pane should be active.
+     */
+    hideSettingsPane() {
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Hiding Settings Pane");
+        if (this.settingsPane) this.settingsPane.style.display = 'none';
+        if (this.overlay) this.overlay.style.display = 'none';
+        // Decide which view to show after closing settings
+        if (this.displayedPeerId) {
+            // If a chat was active before opening settings, show it again
+            this.switchToSessionView(this.displayedPeerId);
+        } else {
+            // Otherwise, show the default welcome view
+            this.showDefaultRegisteredView(this.identifier);
+        }
+    }
+    // -----------------------------------
 
     // --- Focus Helper Methods ---
     /** Sets focus to the peer ID input field if available and enabled. */
@@ -570,7 +668,7 @@ class UIController {
     /** Clears all messages from the message display area. */
     clearMessages() { if (this.messageArea) this.messageArea.innerHTML = ''; }
 
-    // --- NEW: Typing Indicator Methods ---
+    // --- Typing Indicator Methods ---
 
     /**
      * Shows the typing indicator text (e.g., "PeerID is typing...").
@@ -592,7 +690,133 @@ class UIController {
     }
     // -----------------------------------
 
-    // --- NEW: Info Pane Visibility Checks ---
+    // --- Audio Notification Method ---
+    /**
+     * Attempts to play the preloaded notification sound specified by name.
+     * Includes error handling for browser restrictions or loading issues.
+     * Checks the isMuted flag before attempting to play.
+     * @param {string} soundName - The name of the sound to play (e.g., 'notification', 'begin', 'error').
+     */
+    playSound(soundName) {
+        // Check mute state first
+        if (this.isMuted) {
+            // Log skip only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`UI: Sound '${soundName}' skipped (muted).`);
+            return; // Don't play if muted
+        }
+
+        // Find the preloaded Audio object.
+        const sound = this.sounds[soundName];
+
+        if (sound) {
+            // Log play attempt only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`UI: Attempting to play sound '${soundName}'.`);
+            // Reset playback position to the start in case it was played recently.
+            sound.currentTime = 0;
+            // The play() method returns a Promise which might be rejected
+            // if the browser blocks autoplay before user interaction.
+            sound.play()
+                .catch(error => {
+                    // Always log playback errors.
+                    console.error(`UI: Error playing sound '${soundName}':`, error);
+                    // Common errors include NotAllowedError (user interaction needed)
+                    // or NotSupportedError (file format issue).
+                });
+        } else {
+            // Always log warning if sound object wasn't loaded or name is invalid.
+            console.warn(`UI: Cannot play sound, Audio object for '${soundName}' not loaded or invalid name.`);
+        }
+    }
+    // ------------------------------------
+
+    // --- Mute State Management ---
+    /**
+     * Toggles the internal mute state flag (this.isMuted).
+     * Calls updateMuteButtonIcon to reflect the change visually.
+     */
+    toggleMuteState() {
+        this.isMuted = !this.isMuted; // Flip the boolean flag
+        // Log state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Mute state toggled to: ${this.isMuted}`);
+        this.updateMuteButtonIcon(); // Update the button's appearance
+    }
+
+    /**
+     * Updates the mute button's icon (🔊/🔇) and CSS class based on the current isMuted state.
+     * Directly sets the textContent of the icon span.
+     */
+    updateMuteButtonIcon() {
+        if (!this.muteButton) return; // Exit if button element not found
+
+        const iconSpan = this.muteButton.querySelector('span'); // Get the inner span for the icon
+        if (!iconSpan) return; // Exit if span not found
+
+        if (this.isMuted) {
+            // Muted state: Set muted icon, add 'muted' class for opacity
+            iconSpan.textContent = '🔇'; // Set muted icon directly
+            this.muteButton.classList.add('muted');
+            this.muteButton.title = "Unmute Notifications"; // Update tooltip
+        } else {
+            // Unmuted state: Set unmuted icon, remove 'muted' class
+            iconSpan.textContent = '🔊'; // Set unmuted icon directly
+            this.muteButton.classList.remove('muted');
+            this.muteButton.title = "Mute Notifications"; // Update tooltip
+        }
+    }
+    // --------------------------------
+
+    // --- NEW: Chat Style Management ---
+    /**
+     * Applies the initial chat styles based on the default values in the settings controls.
+     */
+    applyInitialChatStyles() {
+        const initialFontFamily = this.fontFamilySelect ? this.fontFamilySelect.value : 'sans-serif'; // Fallback
+        const initialFontSize = this.fontSizeInput ? this.fontSizeInput.value : '15'; // Default size
+        this.applyChatStyles(initialFontFamily, initialFontSize);
+    }
+
+    /**
+     * Applies the specified font family and size to the message area.
+     * @param {string} fontFamily - The CSS font-family value (e.g., "Arial, sans-serif").
+     * @param {string|number} fontSize - The font size value (number or string like "16").
+     */
+    applyChatStyles(fontFamily, fontSize) {
+        if (!this.messageArea) return; // Exit if message area not found
+
+        // Log style application only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Applying chat styles - Family: ${fontFamily}, Size: ${fontSize}px`);
+
+        if (fontFamily) {
+            this.messageArea.style.fontFamily = fontFamily;
+        }
+        if (fontSize) {
+            // Ensure 'px' unit is added if it's just a number.
+            this.messageArea.style.fontSize = `${fontSize}px`;
+        }
+    }
+
+    /**
+     * Gets the currently applied font family and size from the message area.
+     * Returns default values if styles are not set or cannot be retrieved.
+     * @returns {{fontFamily: string, fontSize: string}} An object with fontFamily and fontSize (number as string).
+     */
+    getCurrentChatStyles() {
+        let fontFamily = 'sans-serif'; // Default fallback
+        let fontSize = '15'; // Default fallback size
+
+        if (this.messageArea) {
+            const computedStyle = window.getComputedStyle(this.messageArea);
+            fontFamily = computedStyle.fontFamily || fontFamily;
+            // Parse font size, removing 'px' and converting to number string
+            fontSize = parseInt(computedStyle.fontSize, 10).toString() || fontSize;
+        }
+        // Log retrieval only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Retrieved current chat styles - Family: ${fontFamily}, Size: ${fontSize}`);
+        return { fontFamily, fontSize };
+    }
+    // --------------------------------
+
+    // --- Info Pane Visibility Checks ---
 
     /**
      * Checks if the info pane is currently visible and associated with the specified peer.
@@ -674,7 +898,8 @@ class UIController {
     bindCloseInfoButton(handler) {
         if (this.closeInfoButton) {
             this.closeInfoButton.addEventListener('click', (event) => {
-                const peerId = event.target.dataset.peerid; // Get peerId from data attribute
+                // Use currentTarget to ensure we get the button the listener was attached to
+                const peerId = event.currentTarget.dataset.peerid;
                 if (peerId) {
                     handler(peerId); // Call handler with the ID
                 } else {
@@ -692,7 +917,8 @@ class UIController {
     bindRetryRequestButton(handler) {
         if (this.retryRequestButton) {
             this.retryRequestButton.addEventListener('click', (event) => {
-                const peerId = event.target.dataset.peerid; // Get peerId from data attribute
+                // Use currentTarget to ensure we get the button the listener was attached to
+                const peerId = event.currentTarget.dataset.peerid;
                 if (peerId) {
                     handler(peerId); // Call handler with the ID
                 } else {
@@ -710,7 +936,8 @@ class UIController {
     bindCancelRequestButton(handler) {
         if (this.cancelRequestButton) {
             this.cancelRequestButton.addEventListener('click', (event) => {
-                 const peerId = event.target.dataset.peerid; // Get peerId from data attribute
+                 // Use currentTarget to ensure we get the button the listener was attached to
+                 const peerId = event.currentTarget.dataset.peerid;
                  if (peerId) {
                      handler(peerId); // Call handler with the ID
                  } else {
@@ -721,7 +948,6 @@ class UIController {
         }
     }
 
-    // --- NEW: Bind Message Input Event ---
     /**
      * Attaches an event listener to the message input field for the 'input' event.
      * This event fires immediately whenever the text content changes (typing, pasting, etc.).
@@ -734,21 +960,76 @@ class UIController {
             this.messageInput.addEventListener('input', handler);
         }
     }
-    // -----------------------------------
+
+    /**
+     * Binds a handler function to the mute button's click event.
+     * @param {function} handler - The function to call when the mute button is clicked.
+     */
+    bindMuteButton(handler) {
+        if (this.muteButton) {
+            this.muteButton.addEventListener('click', handler);
+        }
+    }
+
+    // --- NEW: Settings Bindings ---
+    /**
+     * Binds a handler function to the settings button's click event.
+     * @param {function} handler - The function to call when the settings button is clicked.
+     */
+    bindSettingsButton(handler) {
+        if (this.settingsButton) {
+            this.settingsButton.addEventListener('click', handler);
+        }
+    }
+
+    /**
+     * Binds a handler function to the close settings button's click event.
+     * @param {function} handler - The function to call when the close settings button is clicked.
+     */
+    bindCloseSettingsButton(handler) {
+        if (this.closeSettingsButton) {
+            this.closeSettingsButton.addEventListener('click', handler);
+        }
+    }
+
+    /**
+     * Binds a handler function to the font family select dropdown's 'change' event.
+     * @param {function} handler - The function to call when the selection changes.
+     */
+    bindFontFamilyChange(handler) {
+        if (this.fontFamilySelect) {
+            this.fontFamilySelect.addEventListener('change', handler);
+        }
+    }
+
+    /**
+     * Binds a handler function to the font size input's 'input' event.
+     * @param {function} handler - The function to call when the input value changes.
+     */
+    bindFontSizeChange(handler) {
+        if (this.fontSizeInput) {
+            // Use 'input' for immediate feedback as the user changes the value
+            this.fontSizeInput.addEventListener('input', handler);
+        }
+    }
+    // -----------------------------
 
     // --- Utility ---
     /**
-     * Validates that all expected DOM element references were successfully found.
-     * Logs warnings for any missing elements.
-     * @returns {boolean} True if all elements were found, false otherwise.
+     * Validates that all expected DOM element references were successfully found
+     * and that the sound objects were created.
+     * Logs warnings for any missing elements or failed sound loads.
+     * @returns {boolean} True if all elements were found and sounds loaded, false otherwise.
      */
     validateElements() {
-        const elements = [
-            // List all element properties stored in the constructor
+        const domElements = [
+            // List all DOM element properties stored in the constructor
             this.statusElement, this.registrationArea, this.identifierInput, this.registerButton,
             this.appContainer, this.sidebar, this.myIdentifierDisplay, this.initiationArea,
-            this.peerIdInput, this.startChatButton, this.sessionListContainer, this.sessionList,
-            this.mainContent, this.overlay, // Added overlay
+            this.peerIdInput, this.startChatButton,
+            this.sidebarControls, this.muteButton, this.settingsButton, // Added settings button
+            this.sessionListContainer, this.sessionList,
+            this.mainContent, this.overlay,
             this.welcomeMessage, this.myIdentifierWelcome,
             this.incomingRequestArea, this.incomingRequestText,
             this.acceptButton, this.denyButton,
@@ -756,22 +1037,28 @@ class UIController {
             this.waitingResponseArea, this.waitingResponseText, this.cancelRequestButton,
             this.activeChatArea, this.chatHeader,
             this.peerIdentifierDisplay, this.messageArea,
-            // Add typing indicator elements
             this.typingIndicatorArea, this.typingIndicatorText,
-            // Continue existing
             this.messageInputArea, this.messageInput,
-            this.sendButton, this.disconnectButton
+            this.sendButton, this.disconnectButton,
+            // Settings Pane Elements
+            this.settingsPane, this.fontFamilySelect, this.fontSizeInput, this.closeSettingsButton
         ];
         let allFound = true;
-        elements.forEach((el) => {
-            // Find the property name associated with the element for logging
+        // Validate DOM elements
+        domElements.forEach((el) => {
             const keyName = Object.keys(this).find(key => this[key] === el);
             if (!el) {
-                // Always log validation warnings.
-                console.warn(`UIController: Element for property '${keyName || 'UNKNOWN'}' not found! Check HTML IDs.`);
+                console.warn(`UIController: DOM Element for property '${keyName || 'UNKNOWN'}' not found! Check HTML IDs.`);
                 allFound = false;
             }
         });
+        // Validate Sound objects
+        for (const soundName in this.sounds) {
+            if (this.sounds[soundName] === null) {
+                console.warn(`UIController: Audio object for sound '${soundName}' failed to load! Check path/file.`);
+                allFound = false;
+            }
+        }
         return allFound;
     }
 }

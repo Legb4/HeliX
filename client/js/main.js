@@ -63,9 +63,9 @@ document.addEventListener('DOMContentLoaded', () => {
         sessionManager.handleIncomingMessage(messageData);
     });
 
-    // --- 3. Bind UI Actions to SessionManager Methods ---
+    // --- 3. Bind UI Actions to SessionManager/UIController Methods ---
     // Connect user interface elements (buttons, inputs) to their corresponding
-    // actions within the SessionManager.
+    // actions within the SessionManager or UIController.
 
     // Registration: Bind the register button click.
     uiController.bindRegisterButton(() => {
@@ -199,6 +199,47 @@ document.addEventListener('DOMContentLoaded', () => {
             sessionManager.handleLocalTyping(activePeerId);
         }
     });
+
+    // Bind Mute Button: Toggle mute state in UIController.
+    uiController.bindMuteButton(() => {
+        // Log mute toggle only if DEBUG is enabled.
+        if (config.DEBUG) console.log("Mute button clicked.");
+        uiController.toggleMuteState(); // Call the UIController method directly
+    });
+
+    // --- NEW: Bind Settings UI Elements ---
+    // Bind Settings Button: Show the settings pane.
+    uiController.bindSettingsButton(() => {
+        // Log settings open only if DEBUG is enabled.
+        if (config.DEBUG) console.log("Settings button clicked.");
+        uiController.showSettingsPane();
+    });
+
+    // Bind Close Settings Button: Hide the settings pane.
+    uiController.bindCloseSettingsButton(() => {
+        // Log settings close only if DEBUG is enabled.
+        if (config.DEBUG) console.log("Close settings button clicked.");
+        uiController.hideSettingsPane();
+    });
+
+    // Bind Font Family Select: Apply new font family when changed.
+    uiController.bindFontFamilyChange((event) => {
+        const newFontFamily = event.target.value;
+        const currentStyles = uiController.getCurrentChatStyles();
+        // Log font change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Font family changed to: ${newFontFamily}`);
+        uiController.applyChatStyles(newFontFamily, currentStyles.fontSize);
+    });
+
+    // Bind Font Size Input: Apply new font size as it changes.
+    uiController.bindFontSizeChange((event) => {
+        const newFontSize = event.target.value;
+        const currentStyles = uiController.getCurrentChatStyles();
+        // Log size change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Font size changed to: ${newFontSize}`);
+        uiController.applyChatStyles(currentStyles.fontFamily, newFontSize);
+    });
+    // ------------------------------------
 
 
     // --- 4. Add Page Unload / Hide Event Listeners for Cleanup ---

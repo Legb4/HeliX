@@ -108,7 +108,7 @@ class SessionManager {
         this.managerState = newState;
     }
 
-    // --- Timeout Handling (No changes needed for PFS) ---
+    // --- Timeout Handling ---
 
     /**
      * Starts a timeout for handshake steps within a specific session.
@@ -143,7 +143,7 @@ class SessionManager {
 
     /**
      * Handles the expiration of a handshake timeout for a specific peer.
-     * Updates the session state and potentially shows an info message.
+     * Updates the session state, plays an error sound, and potentially shows an info message.
      * @param {string} peerId - The ID of the peer whose handshake timed out.
      */
     handleHandshakeTimeout(peerId) {
@@ -164,6 +164,7 @@ class SessionManager {
             const message = `Handshake with ${peerId} timed out. Please try initiating the session again.`;
             // Always try to show the info message pane for handshake timeouts.
             this.uiController.showInfoMessage(peerId, message, false); // No retry for handshake timeout.
+            this.uiController.playSound('error'); // Play error sound
             // Reset the session internally after updating UI/state
             // Note: resetSession will handle switching view if needed.
             this.resetSession(peerId, false, "Handshake timed out."); // notifyUserViaAlert=false as info pane is shown
@@ -212,7 +213,7 @@ class SessionManager {
 
     /**
      * Handles the expiration of the initial request timeout for a specific peer.
-     * Updates the session state and potentially shows an info message allowing retry.
+     * Updates the session state, plays an error sound, and potentially shows an info message allowing retry.
      * @param {string} peerId - The ID of the peer whose request timed out.
      */
     handleRequestTimeout(peerId) {
@@ -225,6 +226,7 @@ class SessionManager {
             const message = `No response from ${peerId}. Request timed out.`;
             // Always show info message with retry option for request timeout.
             this.uiController.showInfoMessage(peerId, message, true); // Show retry button.
+            this.uiController.playSound('error'); // Play error sound
             // Do NOT reset the session here, allow user to retry or close via UI.
         } else if (session) {
             // Log ignored timeout only if DEBUG is enabled.
@@ -269,7 +271,7 @@ class SessionManager {
 
     /**
      * Handles the expiration of the registration timeout.
-     * Updates manager state, alerts the user, and re-enables registration UI.
+     * Updates manager state, plays an error sound, alerts the user, and re-enables registration UI.
      */
     handleRegistrationTimeout() {
         // Always log timeout errors.
@@ -279,6 +281,7 @@ class SessionManager {
             this.updateManagerState(this.STATE_FAILED_REGISTRATION);
             const reason = "No response from server.";
             this.uiController.updateStatus(`Registration Failed: ${reason}`);
+            this.uiController.playSound('error'); // Play error sound
             // Use alert for registration timeout as it's a global failure.
             alert(`Registration failed: ${reason}`);
             // Show registration UI again and re-enable controls.
@@ -398,7 +401,8 @@ class SessionManager {
 
     /**
      * Initiates a new chat session with a target peer.
-     * Creates a new Session instance, generates ECDH keys, and sends a Type 1 request.
+     * Creates a new Session instance, generates ECDH keys, sends a Type 1 request,
+     * and plays the send request sound.
      * @param {string} targetId - The identifier of the peer to connect with.
      */
     async initiateSession(targetId) {
@@ -469,7 +473,8 @@ class SessionManager {
             // Log sending only if DEBUG is enabled.
             if (config.DEBUG) console.log("Sending SESSION_REQUEST (Type 1):", msg);
             if (this.wsClient.sendMessage(msg)) {
-                // 8. Start the request timeout if message sent successfully.
+                // 8. Play send request sound and start timeout if message sent successfully.
+                this.uiController.playSound('sendrequest'); // Play sound on successful send
                 this.startRequestTimeout(newSession);
                 this.uiController.updateStatus(`Waiting for response from ${targetId}...`);
             } else {
@@ -480,6 +485,7 @@ class SessionManager {
             // Handle errors during key generation or sending.
             // Always log errors.
             console.error("Error during initiateSession:", error);
+            this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for better feedback instead of alert
             this.uiController.showInfoMessage(targetId, `Failed to initiate session: ${error.message}`, false);
             // Clean up the failed session attempt.
@@ -546,6 +552,7 @@ class SessionManager {
             // Handle errors during key generation/export or sending.
             // Always log errors.
             console.error("Error during acceptRequest:", error);
+            this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for better feedback instead of alert
             this.uiController.showInfoMessage(peerId, `Failed to accept session: ${error.message}`, false);
             // Clean up the failed session attempt.
@@ -560,7 +567,7 @@ class SessionManager {
 
     /**
      * Denies an incoming session request from a peer.
-     * Sends a Type 3 denial message and resets the session.
+     * Sends a Type 3 denial message, plays end sound, and resets the session.
      * @param {string} peerId - The identifier of the peer whose request is being denied.
      */
     denyRequest(peerId) {
@@ -585,6 +592,9 @@ class SessionManager {
         // Log sending only if DEBUG is enabled.
         if (config.DEBUG) console.log("Sending SESSION_DENY (Type 3):", msg);
         this.wsClient.sendMessage(msg); // Send best effort.
+
+        // Play end sound as the potential session is being terminated.
+        this.uiController.playSound('end');
 
         // Reset the session locally immediately after sending denial.
         this.resetSession(peerId, false, `Denied request from ${peerId}.`); // notifyUserViaAlert=false
@@ -623,6 +633,7 @@ class SessionManager {
         } catch (error) {
             // Always log errors.
             console.error(`Session [${session.peerId}] Error sending Type 4:`, error);
+            this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for feedback
             this.uiController.showInfoMessage(session.peerId, `Handshake Error: ${error.message}`, false);
             this.resetSession(session.peerId, false); // notifyUserViaAlert=false
@@ -682,6 +693,7 @@ class SessionManager {
         } catch (error) {
             // Always log errors.
             console.error(`Session [${session.peerId}] Error sending Type 5:`, error);
+            this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for feedback
             this.uiController.showInfoMessage(session.peerId, `Handshake Error: ${error.message}`, false);
             this.resetSession(session.peerId, false); // notifyUserViaAlert=false
@@ -734,6 +746,7 @@ class SessionManager {
         } catch (error) {
             // Always log errors.
             console.error(`Session [${session.peerId}] Error sending Type 6:`, error);
+            this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for feedback
             this.uiController.showInfoMessage(session.peerId, `Handshake Error: ${error.message}`, false);
             this.resetSession(session.peerId, false); // notifyUserViaAlert=false
@@ -743,6 +756,7 @@ class SessionManager {
     /**
      * Sends the SESSION_ESTABLISHED (Type 7) message to confirm successful handshake.
      * Called by responder after receiving and verifying Type 6 (Response).
+     * Plays the session begin sound.
      * @param {Session} session - The session object.
      */
     async sendSessionEstablished(session) {
@@ -759,6 +773,7 @@ class SessionManager {
                 this.clearHandshakeTimeout(session); // Handshake successful, no more timeout needed.
                 this.uiController.addSessionToList(session.peerId); // Ensure it's in the list.
                 this.switchToSessionView(session.peerId); // Switch to the active chat view.
+                this.uiController.playSound('begin'); // Play session begin sound
                 // Log session active message (not wrapped in DEBUG as it's significant)
                 console.log(`%cSession active with ${session.peerId}. Ready to chat!`, "color: green; font-weight: bold;");
             } else {
@@ -768,6 +783,7 @@ class SessionManager {
         } catch (error) {
             // Always log errors.
             console.error(`Session [${session.peerId}] Error sending Type 7:`, error);
+            this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for feedback
             this.uiController.showInfoMessage(session.peerId, `Handshake Error: ${error.message}`, false);
             this.resetSession(session.peerId, false); // notifyUserViaAlert=false
@@ -797,6 +813,7 @@ class SessionManager {
         if (!session.cryptoModule.derivedSessionKey) {
             // Always log this critical error.
             console.error(`Session [${peerId}] Encryption key error: Missing derived session key.`);
+            this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for critical key error
             this.uiController.showInfoMessage(peerId, "Encryption Error: Session key is missing. Please restart the session.", false);
             this.resetSession(peerId, false); // Reset session
@@ -863,6 +880,7 @@ class SessionManager {
             // Handle errors during the encryption/sending process.
             // Always log errors.
             console.error("Error during sendEncryptedMessage:", error);
+            this.uiController.playSound('error'); // Play error sound
             // Use addSystemMessage for feedback in the chat window instead of alert
             if (this.displayedPeerId === peerId) {
                 this.uiController.addSystemMessage(`Error sending message: ${error.message}`);
@@ -883,7 +901,7 @@ class SessionManager {
 
     /**
      * Ends the chat session with the specified peer from the user's side.
-     * Sends a Type 9 message, shows an info pane locally, and resets the session.
+     * Sends a Type 9 message, plays end sound, shows an info pane locally, and resets the session.
      * @param {string} peerId - The identifier of the peer whose session to end.
      */
     endSession(peerId) {
@@ -901,13 +919,14 @@ class SessionManager {
         this.wsClient.sendMessage(endMessage); // Send best effort.
         this.uiController.updateStatus(`Ending session with ${peerId}...`);
 
-        // --- MODIFICATION START ---
+        // Play end sound locally.
+        this.uiController.playSound('end');
+
         // Show info pane locally *before* resetting the session.
         const reason = `You ended the session with ${peerId}.`;
         this.uiController.showInfoMessage(peerId, reason, false); // Show info, no retry
         // Reset the session locally immediately, but without the alert fallback.
         this.resetSession(peerId, false, reason); // notifyUserViaAlert = false
-        // --- MODIFICATION END ---
     }
 
     /**
@@ -922,7 +941,6 @@ class SessionManager {
         // Disable info pane controls.
         this.uiController.setInfoControlsEnabled(false, true);
 
-        // --- MODIFICATION START ---
         // Check if the session still exists and if it's in a state that requires cleanup upon closing the info pane.
         const session = this.sessions.get(peerId);
         const terminalStates = [
@@ -942,7 +960,6 @@ class SessionManager {
             // If the session doesn't exist (already reset), log for debugging.
             if (config.DEBUG) console.log(`Info pane closed for already reset session [${peerId}].`);
         }
-        // --- MODIFICATION END ---
 
         // Hide the info pane (implicitly done by showDefaultRegisteredView if needed)
         // If no other chat is displayed, show the default welcome view.
@@ -967,7 +984,7 @@ class SessionManager {
 
     /**
      * Handles the user clicking the "Retry" button after a request timeout.
-     * Resends the initial SESSION_REQUEST (Type 1) message.
+     * Resends the initial SESSION_REQUEST (Type 1) message and plays send request sound.
      * @param {string} peerId - The peer ID associated with the timed-out request.
      */
     async retryRequest(peerId) {
@@ -1007,12 +1024,14 @@ class SessionManager {
             // Log sending only if DEBUG is enabled.
             if (config.DEBUG) console.log("Re-sending SESSION_REQUEST (Type 1):", msg);
             if (this.wsClient.sendMessage(msg)) {
-                // Start the request timeout again.
+                // Play send request sound and start timeout again.
+                this.uiController.playSound('sendrequest');
                 this.startRequestTimeout(session);
                 this.uiController.updateStatus(`Waiting for response from ${peerId}...`);
             } else {
                  // Use showInfoMessage for feedback if send fails
                  this.uiController.showInfoMessage(peerId, "Connection error retrying request.", false);
+                 this.uiController.playSound('error'); // Play error sound
                  this.resetSession(peerId, false); // Reset session
             }
         } else {
@@ -1027,8 +1046,8 @@ class SessionManager {
 
     /**
      * Handles the user clicking the "Cancel Request" button while waiting for a peer response.
-     * Sends a Type 9 message (interpreted as cancellation by the server/peer if handshake not complete)
-     * and resets the session locally.
+     * Sends a Type 9 message (interpreted as cancellation by the server/peer if handshake not complete),
+     * plays end sound, and resets the session locally.
      * @param {string} peerId - The peer ID of the outgoing request to cancel.
      */
     cancelRequest(peerId) {
@@ -1046,6 +1065,8 @@ class SessionManager {
             // Log sending only if DEBUG is enabled.
             if (config.DEBUG) console.log("Sending SESSION_END_REQUEST (Type 9) for cancellation:", cancelMsg);
             this.wsClient.sendMessage(cancelMsg); // Send best effort.
+            // Play end sound locally.
+            this.uiController.playSound('end');
             // Reset the session locally.
             this.resetSession(peerId, false, `Request to ${peerId} cancelled.`);
         } else {
@@ -1054,7 +1075,7 @@ class SessionManager {
         }
     }
 
-    // --- Local Typing Handlers (No changes needed for PFS) ---
+    // --- Local Typing Handlers ---
 
     /**
      * Called by main.js when the local user types in the message input for an active chat.
@@ -1127,7 +1148,7 @@ class SessionManager {
     }
     // ---------------------------------
 
-    // --- Peer Typing Indicator Timeout (No changes needed for PFS) ---
+    // --- Peer Typing Indicator Timeout ---
 
     /**
      * Starts a timeout to automatically hide the "peer is typing" indicator for a session
@@ -1164,7 +1185,7 @@ class SessionManager {
     }
     // ---------------------------------------
 
-    // --- Notify peers on disconnect (No changes needed for PFS) ---
+    // --- Notify peers on disconnect ---
 
     /**
      * Attempts to send a SESSION_END (Type 9) message to all connected/handshaking peers
@@ -1206,7 +1227,7 @@ class SessionManager {
     }
     // -----------------------------------------------------
 
-    // --- Central Message Handling and Routing (No changes needed for PFS) ---
+    // --- Central Message Handling and Routing ---
 
     /**
      * Handles raw incoming message data from the WebSocketClient.
@@ -1242,6 +1263,7 @@ class SessionManager {
                 const errorMessage = payload?.error || "Server initiated disconnect (reason unspecified).";
                 // Always log server errors.
                 console.error(`Received server error (Type -2): ${errorMessage}`);
+                this.uiController.playSound('error'); // Play error sound
                 // Alert the user immediately.
                 alert(`Disconnected by Server: ${errorMessage}`);
                 // Immediately trigger the disconnection cleanup and UI reset logic.
@@ -1265,7 +1287,7 @@ class SessionManager {
                 // Error messages use targetId to indicate who the error relates to.
                 relevantPeerId = payload.targetId;
                 session = this.sessions.get(relevantPeerId);
-                this.handleUserNotFound(relevantPeerId, payload);
+                this.handleUserNotFound(relevantPeerId, payload); // Plays error sound internally
                 return; // Processing complete.
             } else {
                 // For all other messages, the sender is the relevant peer.
@@ -1275,7 +1297,7 @@ class SessionManager {
 
             // 5. Handle New Session Request (Type 1)
             if (type === 1) {
-                this.handleSessionRequest(senderId, payload);
+                this.handleSessionRequest(senderId, payload); // Plays request sound internally
                 return; // Processing complete.
             }
 
@@ -1293,12 +1315,13 @@ class SessionManager {
             // Call the session's processMessage method, which returns an action object.
             const result = await session.processMessage(type, payload, this);
             // Process the action requested by the session.
-            await this.processMessageResult(session, result);
+            await this.processMessageResult(session, result); // Plays sounds internally based on action
 
         } catch (error) {
             // Catch errors during parsing, routing, or processing.
             // Always log these errors.
             console.error('Failed to parse/route/handle message:', error, messageData);
+            this.uiController.playSound('error'); // Play error sound for general processing errors
             this.uiController.updateStatus("Error processing message");
             // Potentially show a generic error to the user if appropriate
             // alert("An error occurred while processing a message from the server.");
@@ -1308,7 +1331,7 @@ class SessionManager {
     /**
      * Processes the action object returned by a Session's processMessage method.
      * Executes the requested action, such as sending a message, updating the UI,
-     * resetting the session, or handling typing indicators.
+     * resetting the session, or handling typing indicators. Plays sounds as appropriate.
      * @param {Session} session - The session instance that processed the message.
      * @param {object} result - The action object returned by session.processMessage (e.g., { action: 'SEND_TYPE_4' }).
      */
@@ -1320,7 +1343,7 @@ class SessionManager {
         // Log action request only if DEBUG is enabled.
         if (config.DEBUG) console.log(`Session [${peerId}] Action requested: ${result.action}`);
 
-        // --- Timeout Clearing Logic (No changes needed for PFS) ---
+        // --- Timeout Clearing Logic ---
         // Clear handshake timeout if we are moving out of a handshake state towards active/reset
         const handshakeStates = [
             this.STATE_DERIVING_KEY_INITIATOR, this.STATE_KEY_DERIVED_INITIATOR,
@@ -1357,12 +1380,13 @@ class SessionManager {
                 break;
             case 'SEND_TYPE_7':
                 this.uiController.updateStatus(`Challenge verified with ${peerId}. Establishing session...`);
-                await this.sendSessionEstablished(session);
+                await this.sendSessionEstablished(session); // Plays 'begin' sound internally
                 break;
 
             // Action indicating session is now active (from initiator's perspective after receiving Type 7):
             case 'SESSION_ACTIVE':
                 this.switchToSessionView(peerId); // Ensure view is updated.
+                this.uiController.playSound('begin'); // Play session begin sound
                 // Log session active message (not wrapped in DEBUG as it's significant)
                 console.log(`%cSession active with ${peerId}. Ready to chat!`, "color: green; font-weight: bold;");
                 break;
@@ -1377,6 +1401,10 @@ class SessionManager {
                 } else {
                     // If chat not displayed, mark session as having unread messages.
                     this.uiController.setUnreadIndicator(peerId, true);
+                }
+                // Play notification sound for peer messages
+                if (result.msgType === 'peer') {
+                    this.uiController.playSound('notification');
                 }
                 break;
             case 'DISPLAY_SYSTEM_MESSAGE':
@@ -1398,6 +1426,10 @@ class SessionManager {
                 const showRetry = result.showRetry || false;
                 // Update the UI pane.
                 this.uiController.showInfoMessage(peerId, messageToShow, showRetry);
+                // Play error sound if it's a denial or timeout
+                if (session.state === this.STATE_DENIED || session.state === this.STATE_REQUEST_TIMED_OUT || session.state === this.STATE_HANDSHAKE_TIMED_OUT) {
+                    this.uiController.playSound('error');
+                }
                 // Re-enable initiation controls if this was the only session attempt and it failed definitively.
                 const definitiveFailureStates = [this.STATE_DENIED, this.STATE_HANDSHAKE_TIMED_OUT];
                 if (definitiveFailureStates.includes(session.state)) {
@@ -1409,6 +1441,18 @@ class SessionManager {
             case 'RESET':
                 const reason = result.reason || `Session with ${peerId} ended.`;
                 const notifyViaAlert = result.notifyUser || false; // Check if alert fallback is requested
+
+                // Play appropriate sound based on context (error or clean end)
+                // Check if the reason indicates a handshake error or if the session state implies an error
+                const isErrorReset = reason.toLowerCase().includes('error') ||
+                                     reason.toLowerCase().includes('failed') ||
+                                     session.state === this.STATE_HANDSHAKE_TIMED_OUT; // Add other error states if needed
+                if (isErrorReset) {
+                    this.uiController.playSound('error');
+                } else if (reason.includes('ended by') || reason.includes('You ended') || reason.includes('denied request') || reason.includes('cancelled')) {
+                    // Play end sound for clean disconnects (Type 9, local end, denial, cancellation)
+                    this.uiController.playSound('end');
+                }
 
                 // Always try to show the info pane if there's a reason, regardless of current view.
                 // This provides better context than an alert.
@@ -1427,7 +1471,7 @@ class SessionManager {
                 }
                 break;
 
-            // Handle Typing Indicator Actions (No changes needed for PFS)
+            // Handle Typing Indicator Actions
             case 'SHOW_TYPING':
                 if (this.displayedPeerId === peerId) {
                     this.uiController.showTypingIndicator(peerId);
@@ -1451,11 +1495,11 @@ class SessionManager {
     }
 
 
-    // --- Manager-Level Handlers (No changes needed for PFS) ---
+    // --- Manager-Level Handlers ---
 
     /**
      * Handles the registration success message (Type 0.1) from the server.
-     * Stores the identifier, updates manager state, and shows the main app UI.
+     * Stores the identifier, updates manager state, plays sound, and shows the main app UI.
      * @param {object} payload - Expected: { identifier: string, message: string }
      */
     handleRegistrationSuccess(payload) {
@@ -1464,6 +1508,7 @@ class SessionManager {
         this.updateManagerState(this.STATE_REGISTERED); // Update state.
         // Log success (not wrapped in DEBUG as it's significant).
         console.log(`Successfully registered as: ${this.identifier}`);
+        this.uiController.playSound('registered'); // Play registration success sound
         // Show the main application UI (sidebar, content area).
         this.uiController.showMainApp(this.identifier);
         this.uiController.updateStatus(`Registered as: ${this.identifier}`);
@@ -1473,7 +1518,7 @@ class SessionManager {
 
     /**
      * Handles the registration failure message (Type 0.2) from the server.
-     * Updates manager state, alerts the user, and keeps the registration UI visible.
+     * Updates manager state, plays error sound, alerts the user, and keeps the registration UI visible.
      * @param {object} payload - Expected: { identifier?: string, error: string }
      */
     handleRegistrationFailure(payload) {
@@ -1484,6 +1529,7 @@ class SessionManager {
         // Always log registration errors.
         console.error(`Registration failed for '${requestedId}': ${reason}`);
         this.uiController.updateStatus(`Registration Failed: ${reason}`);
+        this.uiController.playSound('error'); // Play error sound
         // Use alert for registration failure as it's a global issue preventing app use.
         alert(`Registration failed: ${reason}\nPlease try a different identifier.`);
         // Keep registration UI visible and re-enable controls.
@@ -1494,7 +1540,7 @@ class SessionManager {
     /**
      * Handles the user not found error message (Type -1) from the server.
      * Typically received when trying to initiate a session with an unknown/offline user.
-     * Updates the relevant session state to DENIED and shows an info message.
+     * Updates the relevant session state to DENIED, plays error sound, and shows an info message.
      * @param {string} targetIdFailed - The identifier that was not found.
      * @param {object} payload - Expected: { targetId: string, message: string }
      */
@@ -1503,6 +1549,7 @@ class SessionManager {
         const errorMessage = payload.message || `User '${targetIdFailed}' not found or disconnected.`;
         // Always log server errors.
         console.error(`Server Error: ${errorMessage}`);
+        this.uiController.playSound('error'); // Play error sound
         // Check if we have a session for this peer and it was in the initiating state.
         if (session && session.state === this.STATE_INITIATING_SESSION) {
             // Log action only if DEBUG is enabled.
@@ -1529,7 +1576,7 @@ class SessionManager {
     /**
      * Handles an incoming session request (Type 1) from a peer.
      * Creates a new Session instance in the REQUEST_RECEIVED state.
-     * Updates the UI to show the incoming request or marks the session as unread if busy.
+     * Plays request sound and updates the UI to show the incoming request or marks the session as unread if busy.
      * @param {string} senderId - The identifier of the peer initiating the request.
      * @param {object} payload - Expected: { targetId: string (own ID), senderId: string }
      */
@@ -1564,7 +1611,10 @@ class SessionManager {
         // 4. Add the session to the UI list.
         this.uiController.addSessionToList(senderId);
 
-        // 5. Update the main UI view.
+        // 5. Play request sound.
+        this.uiController.playSound('receiverequest'); // Use the renamed sound
+
+        // 6. Update the main UI view.
         if (!this.displayedPeerId) {
             // If no other chat/pane is active, show the incoming request pane immediately.
             this.pendingPeerIdForAction = senderId; // Mark this peer as needing action.
@@ -1583,7 +1633,7 @@ class SessionManager {
     /**
      * Handles the WebSocket disconnection event OR a forced disconnect trigger.
      * Clears all session timeouts, resets all sessions, updates manager state,
-     * and shows the registration screen. Prevents running twice if already disconnected.
+     * plays error sound, and shows the registration screen. Prevents running twice if already disconnected.
      * @param {string} [reason=null] - Optional reason for the disconnection, used for status updates.
      */
     handleDisconnection(reason = null) {
@@ -1613,6 +1663,9 @@ class SessionManager {
          this.displayedPeerId = null;
          this.pendingPeerIdForAction = null;
          this.identifier = null; // Clear registered identifier.
+
+         // Play error sound for disconnection.
+         this.uiController.playSound('error');
 
          // Update UI status and show the registration screen.
          // Use alert for the main disconnection event as it affects the whole app.

@@ -23,6 +23,7 @@
     --bg-list-active: #094771;          /* Background for the active session list item */
     --bg-info: #333322;                 /* Background for informational areas (e.g., incoming request) */
     --bg-danger-info: #442a31;          /* Background for error/denial info areas */
+    --bg-settings: #2d2d30;             /* Background for the settings pane */
     --bg-overlay: rgba(0, 0, 0, 0.6);   /* Background for the overlay */
 
     /* Text Colors */
@@ -43,6 +44,7 @@
     --border-color-input: #555555;      /* Border color for input fields */
     --border-color-danger: #a84050;     /* Border color for danger elements */
     --border-color-info: #666;          /* Border color for info elements */
+    --border-color-settings: #444;      /* Border color for settings pane */
 
     /* Accent Colors */
     --accent-red: #f44336;              /* Red accent (e.g., notification dot) */
@@ -164,7 +166,7 @@ body {
 
 /* Area in the sidebar for initiating a new chat. */
 #initiation-area {
-    margin-bottom: 20px; /* Space below this section */
+    margin-bottom: 15px; /* Reduced space below this section */
 }
 /* Styles labels within the initiation area. */
 #initiation-area label {
@@ -185,10 +187,62 @@ body {
     width: 100%; /* Full width button */
 }
 
+/* --- Sidebar Controls Area Styling --- */
+/* Styles the container for sidebar controls like the mute button. */
+#sidebar-controls {
+    margin-bottom: 15px; /* Space below the controls, before the session list */
+    padding-bottom: 10px; /* Space below the button */
+    border-bottom: 1px solid var(--border-color); /* Separator line below controls */
+    text-align: left; /* Align button(s) to the left */
+}
+
+/* Styles the mute button specifically. */
+#mute-button,
+#settings-button { /* Apply same base style to settings button */
+    background: none; /* Transparent background */
+    border: 1px solid transparent; /* Transparent border initially */
+    color: var(--text-secondary); /* Use secondary text color for icon */
+    padding: 4px 6px; /* Small padding */
+    font-size: 1.2em; /* Make icon slightly larger */
+    cursor: pointer; /* Indicate interactivity */
+    border-radius: 3px; /* Slightly rounded corners */
+    line-height: 1; /* Prevent extra vertical space */
+    transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease; /* Smooth transitions */
+    margin-right: 4px; /* Add small space between buttons */
+}
+
+/* Styles the mute/settings buttons on hover. */
+#mute-button:hover,
+#settings-button:hover {
+    background-color: var(--bg-button-hover); /* Subtle background on hover */
+    border-color: var(--border-color-input); /* Show border on hover */
+    color: var(--text-light); /* Slightly lighter icon color on hover */
+}
+
+/* Styles the mute/settings buttons when actively clicked. */
+#mute-button:active,
+#settings-button:active {
+    background-color: var(--bg-button-active); /* Darker background when clicked */
+}
+
+/* Styles the mute button when it has the 'muted' class. */
+#mute-button.muted {
+    opacity: 0.5; /* Make it semi-transparent */
+}
+
+/* Styles the span inside the mute/settings buttons (for the icon). */
+#mute-button span,
+#settings-button span {
+    display: inline-block; /* Allow manipulation */
+    vertical-align: middle; /* Align icon vertically */
+}
+/* --- End Sidebar Controls Area Styling --- */
+
+
 /* Container for the list of active/pending chat sessions. */
 #session-list-container {
-    margin-top: 15px; /* Space above */
-    border-top: 1px solid var(--border-color); /* Separator line */
+    /* margin-top: 15px; REMOVED - Space now handled by #sidebar-controls */
+    /* border-top: 1px solid var(--border-color); REMOVED - Separator now below controls */
     padding-top: 10px; /* Space below the line */
     flex-grow: 1; /* Allow this container to grow and fill remaining sidebar space */
     min-height: 100px; /* Minimum height */
@@ -292,7 +346,7 @@ body {
     right: 0;
     bottom: 0;
     background-color: var(--bg-overlay); /* Use variable for semi-transparent background */
-    z-index: 5; /* Position it above welcome, below info/request */
+    z-index: 5; /* Position it above welcome, below info/request/settings */
 }
 /* --- End Overlay Styling --- */
 
@@ -457,7 +511,7 @@ body {
     padding: 4px 10px; /* Smaller padding */
     font-size: 0.85em; /* Smaller font size */
     background-color: var(--bg-button-danger); /* Danger background color */
-    border-color: var(--border-color-danger); /* Danger border color */
+    border: 1px solid var(--border-color-danger); /* Danger border color */
     color: var(--text-light); /* Light text color */
     cursor: pointer; /* Indicate interactivity */
     transition: background-color 0.15s ease, border-color 0.15s ease; /* Smooth transitions */
@@ -476,6 +530,7 @@ body {
     margin-bottom: 10px; /* Space below messages, before typing indicator/input */
     padding: 10px; /* Inner spacing */
     background-color: var(--bg-message-area); /* Specific background for messages */
+    /* Font family and size will be controlled by JS */
 }
 
 /* IRC Style Message Display */
@@ -529,7 +584,7 @@ body {
     color: var(--text-light); /* Default light text color */
 }
 
-/* --- NEW: Typing Indicator Styling --- */
+/* --- Typing Indicator Styling --- */
 /* Styles the container area reserved for the typing indicator below the message area. */
 #typing-indicator-area {
     height: 20px; /* Reserve a fixed height for the indicator */
@@ -565,9 +620,96 @@ body {
     padding: 8px 15px; /* Standard button padding */
 }
 
+/* --- Settings Pane Styling --- */
+/* Styles the settings pane container. */
+#settings-pane {
+    display: none; /* Hidden by default, shown by JS */
+    padding: 20px 25px; /* Inner spacing */
+    border: 1px solid var(--border-color-settings); /* Border */
+    background-color: var(--bg-settings); /* Specific background */
+    color: var(--text-light); /* Standard light text */
+    max-width: 500px; /* Limit width */
+    width: 90%; /* Responsive width */
+    border-radius: 5px; /* Rounded corners */
+    position: absolute; /* Position relative to #main-content */
+    top: 50%;           /* Center vertically */
+    left: 50%;          /* Center horizontally */
+    transform: translate(-50%, -50%); /* Fine-tune centering */
+    z-index: 10; /* Position it above the overlay */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); /* Add a subtle shadow */
+}
+
+/* Styles the main heading within the settings pane. */
+#settings-pane h2 {
+    margin-top: 0;
+    margin-bottom: 20px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 300; /* Lighter weight */
+    font-size: 1.5em;
+    color: var(--text-light-strong);
+    text-align: center;
+}
+
+/* Styles sections within the settings pane. */
+#settings-pane .settings-section {
+    margin-bottom: 20px;
+}
+
+/* Styles sub-headings within settings sections. */
+#settings-pane .settings-section h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-size: 1.1em;
+    color: var(--text-secondary);
+    border-bottom: 1px dashed var(--border-color);
+    padding-bottom: 5px;
+}
+
+/* Styles individual setting items (label + input/select). */
+#settings-pane .setting-item {
+    margin-bottom: 12px;
+    display: flex; /* Use flexbox for alignment */
+    align-items: center; /* Vertically align label and control */
+    gap: 10px; /* Space between label and control */
+}
+
+/* Styles labels within setting items. */
+#settings-pane .setting-item label {
+    flex-basis: 120px; /* Fixed width for labels */
+    flex-shrink: 0; /* Prevent label from shrinking */
+    text-align: right; /* Align label text to the right */
+    color: var(--text-secondary);
+    font-size: 0.95em;
+}
+
+/* Styles select dropdowns within setting items. */
+#settings-pane .setting-item select {
+    flex-grow: 1; /* Allow select to fill remaining space */
+    /* Inherit general input styles */
+}
+
+/* Styles number inputs within setting items. */
+#settings-pane .setting-item input[type="number"] {
+    flex-grow: 1; /* Allow input to fill remaining space */
+    max-width: 80px; /* Limit width of number input */
+    /* Inherit general input styles */
+}
+
+/* Styles the close button at the bottom of the settings pane. */
+#settings-pane #close-settings-button {
+    display: block; /* Make it a block element */
+    margin: 20px auto 0 auto; /* Center the button horizontally, add top margin */
+    min-width: 100px; /* Minimum width */
+}
+/* --- End Settings Pane Styling --- */
+
+
 /* General Input/Button Styling */
 /* Base styles for all text input fields. */
-input[type="text"] {
+input[type="text"],
+input[type="number"], /* Add number input */
+select { /* Add select element */
     background-color: var(--bg-input); /* Input background color */
     color: var(--text-light); /* Text color */
     border: 1px solid var(--border-color-input); /* Input border color */
@@ -575,22 +717,28 @@ input[type="text"] {
     border-radius: 3px; /* Rounded corners */
     font-size: inherit; /* Use the font size of the parent element */
     transition: border-color 0.15s ease, box-shadow 0.15s ease; /* Smooth transitions for focus */
+    box-sizing: border-box; /* Ensure padding/border included in width */
 }
-/* Styles for text input fields when they have focus. */
-input[type="text"]:focus {
+/* Styles for text/number/select fields when they have focus. */
+input[type="text"]:focus,
+input[type="number"]:focus,
+select:focus {
     outline: none; /* Remove default browser outline */
     border-color: var(--accent-blue); /* Use blue accent color for border */
     box-shadow: 0 0 0 2px rgba(0, 122, 204, 0.3); /* Add a subtle blue glow */
 }
-/* Styles for disabled text input fields. */
-input[type="text"]:disabled {
+/* Styles for disabled text/number/select fields. */
+input[type="text"]:disabled,
+input[type="number"]:disabled,
+select:disabled {
     background-color: #444; /* Darker background */
     cursor: not-allowed; /* Indicate non-interactivity */
     opacity: 0.6; /* Reduce opacity */
 }
 
-/* Base styles for all buttons. */
-button {
+/* Base styles for all buttons (excluding icon buttons and disconnect). */
+/* MODIFIED: Added #disconnect-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button) {
     padding: 8px 15px; /* Default padding */
     cursor: pointer; /* Indicate interactivity */
     border: 1px solid var(--border-color); /* Default border */
@@ -600,17 +748,20 @@ button {
     font-size: 0.95em; /* Slightly smaller font size */
     transition: background-color 0.15s ease, border-color 0.15s ease; /* Smooth transitions */
 }
-/* Styles for buttons on hover. */
-button:hover {
+/* Styles for buttons on hover (excluding icon buttons and disconnect). */
+/* MODIFIED: Added #disconnect-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):hover {
     background-color: var(--bg-button-hover); /* Hover background color */
     border-color: #666; /* Slightly lighter border */
 }
-/* Styles for buttons when actively being clicked. */
-button:active {
+/* Styles for buttons when actively being clicked (excluding icon buttons and disconnect). */
+/* MODIFIED: Added #disconnect-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):active {
      background-color: var(--bg-button-active); /* Active background color */
 }
-/* Styles for disabled buttons. */
-button:disabled {
+/* Styles for disabled buttons (excluding icon buttons and disconnect). */
+/* MODIFIED: Added #disconnect-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):disabled {
     background-color: var(--bg-button-disabled); /* Disabled background */
     border-color: var(--border-color-input); /* Use input border color */
     color: var(--text-button-disabled); /* Disabled text color */

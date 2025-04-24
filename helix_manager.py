@@ -509,15 +509,15 @@ def config_menu(settings):
     """
     while True:
         print("\n--- HeliX Configuration & Management ---")
-        print(f"1. WSS Host:         {settings['wss_host']} (Saved to server/config.py)")
-        print(f"2. WSS Port:         {settings['wss_port']} (Saved to server/config.py)")
-        print(f"3. HTTPS Host:       {settings['https_host']} (Manager session only)")
-        print(f"4. HTTPS Port:       {settings['https_port']} (Manager session only)")
+        print(f"1. WSS Host:         {settings['wss_host']}")
+        print(f"2. WSS Port:         {settings['wss_port']}")
+        print(f"3. HTTPS Host:       {settings['https_host']}")
+        print(f"4. HTTPS Port:       {settings['https_port']}")
         # Display Debug Modes
         server_debug_status = "ENABLED" if settings['server_debug'] else "DISABLED"
         client_debug_status = "ENABLED" if settings['client_debug'] else "DISABLED"
-        print(f"5. Server Debug Log: {server_debug_status} (Saved to server/config.py)")
-        print(f"6. Client Debug Log: {client_debug_status} (Saved to client/js/config.js)")
+        print(f"5. Server Debug Log: {server_debug_status}")
+        print(f"6. Client Debug Log: {client_debug_status}")
         print("------------------------------------")
         print("7. Manage TLS Certificates (Check/Generate/Install CA)")
         print("8. Start HTTPS/WSS Servers")
