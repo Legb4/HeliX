@@ -13,12 +13,15 @@
     --bg-message-peer-subtle: rgba(204, 204, 204, 0.05); /* Subtle background for peer messages (optional) */
     --bg-message-own-subtle: rgba(0, 122, 204, 0.08);   /* Subtle background for own messages (optional) */
     --bg-message-system: rgba(218, 165, 32, 0.1); /* Background for system messages */
+    --bg-message-file: rgba(100, 100, 120, 0.1); /* NEW: Background for file transfer messages */
     --bg-button: #3f3f46;               /* Default button background */
     --bg-button-hover: #5a5a63;         /* Button background on hover */
     --bg-button-active: #4a4a53;        /* Button background when clicked */
     --bg-button-disabled: #444444;      /* Button background when disabled */
-    --bg-button-danger: #8f3040;        /* Background for danger/destructive buttons (e.g., disconnect) */
+    --bg-button-danger: #8f3040;        /* Background for danger/destructive buttons (e.g., disconnect, reject, cancel) */
     --bg-button-danger-hover: #a84050;  /* Danger button background on hover */
+    --bg-button-success: #3f6844;       /* NEW: Background for success buttons (e.g., accept) */
+    --bg-button-success-hover: #4f8054; /* NEW: Success button background on hover */
     --bg-list-hover: #2a2d2e;           /* Background for session list items on hover */
     --bg-list-active: #094771;          /* Background for the active session list item */
     --bg-info: #333322;                 /* Background for informational areas (e.g., incoming request) */
@@ -30,7 +33,7 @@
     --text-light: #cccccc;              /* Primary light text color */
     --text-light-strong: #d4d4d4;       /* Slightly stronger light text color */
     --text-secondary: #a0a0a0;          /* Secondary text color (for labels, timestamps, status) */
-    --text-link: #4dabf7;               /* Link color (not currently used, but good practice) */
+    --text-link: #4dabf7;               /* Link color (used for download link) */
     --text-sender-peer: #ce9178;        /* Color for peer's sender name */
     --text-sender-own: #9cdcfe;         /* Color for own sender name */
     --text-sender-system: #dcdcaa;      /* Color for system message sender/prefix */
@@ -38,18 +41,22 @@
     --text-info: #ffd54f;               /* Text color for informational messages */
     --text-button-disabled: #888888;    /* Text color for disabled buttons */
     --text-typing: #a0a0a0;             /* Color for the 'is typing...' indicator text */
+    --text-file-info: #b0b0b0;          /* NEW: Color for file info text */
 
     /* Border Colors */
     --border-color: #333333;            /* Default border color */
     --border-color-input: #555555;      /* Border color for input fields */
     --border-color-danger: #a84050;     /* Border color for danger elements */
+    --border-color-success: #4f8054;    /* NEW: Border color for success elements */
     --border-color-info: #666;          /* Border color for info elements */
     --border-color-settings: #444;      /* Border color for settings pane */
+    --border-color-file: #4a4a55;       /* NEW: Border color for file transfer messages */
 
     /* Accent Colors */
     --accent-red: #f44336;              /* Red accent (e.g., notification dot) */
     --accent-blue: #007acc;             /* Blue accent (e.g., input focus) */
     --accent-green: #4ec9b0;            /* Green accent (e.g., own ID highlight) */
+    --accent-progress: #0e639c;         /* NEW: Color for progress bar */
 }
 
 /* Basic Reset & Body */
@@ -154,6 +161,7 @@ body {
     border-bottom: 1px solid var(--border-color); /* Separator line */
     padding-bottom: 10px; /* Space below the text, above the line */
     font-size: 0.9em; /* Slightly smaller font */
+    text-align: center; /* Center align the content */
 }
 /* Styles the actual identifier text within the display area. */
 #my-identifier-display strong {
@@ -162,6 +170,7 @@ body {
     display: block; /* Put ID on its own line */
     margin-top: 4px; /* Space above the ID */
     font-size: 1.1em; /* Slightly larger font for the ID */
+    /* Inherits text-align: center from parent */
 }
 
 /* Area in the sidebar for initiating a new chat. */
@@ -174,6 +183,7 @@ body {
     margin-bottom: 5px; /* Space below label */
     font-size: 0.9em; /* Smaller font size */
     color: var(--text-secondary); /* Secondary text color */
+    text-align: center; /* Center align the label */
 }
 /* Styles input field within the initiation area. */
 #initiation-area input {
@@ -187,13 +197,23 @@ body {
     width: 100%; /* Full width button */
 }
 
+/* --- Sidebar Separator Line Styling --- */
+#sidebar hr {
+    border: 0; /* Remove default border */
+    height: 1px; /* Set height for the line */
+    background-color: var(--border-color); /* Use theme border color */
+    margin: 15px 0; /* Add vertical spacing (adjust as needed) */
+}
+/* --- End Sidebar Separator Line Styling --- */
+
+
 /* --- Sidebar Controls Area Styling --- */
 /* Styles the container for sidebar controls like the mute button. */
 #sidebar-controls {
-    margin-bottom: 15px; /* Space below the controls, before the session list */
+    /* margin-bottom: 15px; REMOVED - Spacing handled by HR margin */
     padding-bottom: 10px; /* Space below the button */
     border-bottom: 1px solid var(--border-color); /* Separator line below controls */
-    text-align: left; /* Align button(s) to the left */
+    text-align: center; /* <<< CHANGED: Align button(s) to the center */
 }
 
 /* Styles the mute button specifically. */
@@ -258,6 +278,7 @@ body {
     letter-spacing: 1px; /* Add letter spacing */
     padding-bottom: 8px; /* Space below text, above line */
     border-bottom: 1px solid var(--border-color); /* Separator line */
+    text-align: center; /* Center align the heading */
 }
 
 /* Styles the unordered list holding the session items. */
@@ -584,6 +605,133 @@ body {
     color: var(--text-light); /* Default light text color */
 }
 
+/* --- File Transfer Message Styling --- */
+/* Styles the container for a file transfer status message. */
+/* This structure is added dynamically by UIController.js */
+.message-file-transfer {
+    background-color: var(--bg-message-file); /* Use specific background */
+    border: 1px solid var(--border-color-file); /* Specific border */
+    border-radius: 4px; /* Rounded corners */
+    padding: 8px 12px; /* Inner padding */
+    margin-bottom: 8px; /* Space below */
+    display: flex; /* Use flexbox for layout */
+    flex-direction: column; /* Stack info, status, progress, actions vertically */
+    gap: 6px; /* Space between stacked items */
+}
+
+/* Styles the container for filename and size. */
+.message-file-transfer .file-info {
+    display: flex; /* Arrange name and size */
+    justify-content: space-between; /* Push name and size apart */
+    align-items: baseline; /* Align text baselines */
+    font-size: 0.95em;
+    color: var(--text-file-info);
+}
+
+/* Styles the filename within the file info. */
+.message-file-transfer .file-name {
+    font-weight: bold; /* Make filename bold */
+    word-break: break-all; /* Break long filenames */
+    margin-right: 10px; /* Space between name and size */
+}
+
+/* Styles the file size text. */
+.message-file-transfer .file-size {
+    font-size: 0.9em; /* Slightly smaller */
+    color: var(--text-secondary); /* Use secondary color */
+    white-space: nowrap; /* Prevent size from wrapping */
+}
+
+/* Styles the status text (e.g., "Waiting...", "Uploading...", "Complete"). */
+.message-file-transfer .file-status {
+    font-size: 0.9em;
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+/* Styles the progress bar element. */
+.message-file-transfer .file-progress {
+    width: 100%; /* Full width */
+    height: 8px; /* Adjust height */
+    appearance: none; /* Remove default browser styling */
+    border: none; /* Remove default border */
+    border-radius: 4px; /* Rounded corners */
+    overflow: hidden; /* Ensure value stays within bounds */
+    background-color: var(--bg-input); /* Background of the track */
+}
+/* Styles the progress bar value (filled part) for WebKit browsers (Chrome, Safari, Edge). */
+.message-file-transfer .file-progress::-webkit-progress-bar {
+    background-color: var(--bg-input);
+    border-radius: 4px;
+}
+.message-file-transfer .file-progress::-webkit-progress-value {
+    background-color: var(--accent-progress); /* Use accent color for progress */
+    border-radius: 4px;
+    transition: width 0.1s linear; /* Smooth progress updates */
+}
+/* Styles the progress bar value (filled part) for Firefox. */
+.message-file-transfer .file-progress::-moz-progress-bar {
+    background-color: var(--accent-progress);
+    border-radius: 4px;
+    transition: width 0.1s linear;
+}
+
+/* Styles the container for action buttons/links. */
+.message-file-transfer .file-actions {
+    margin-top: 4px; /* Space above the actions */
+    display: flex; /* Arrange buttons horizontally */
+    gap: 8px; /* Space between buttons */
+    align-items: center; /* Vertically align buttons/links */
+}
+
+/* Base styles for buttons within file transfer messages. */
+.message-file-transfer .file-actions button,
+.message-file-transfer .file-actions a {
+    padding: 3px 8px; /* Smaller padding */
+    font-size: 0.85em; /* Smaller font size */
+    border-radius: 3px;
+    cursor: pointer;
+    text-decoration: none; /* Remove underline from link */
+    display: inline-block; /* Ensure link behaves like button */
+    text-align: center;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+/* Specific styles for Accept button. */
+.message-file-transfer .file-accept-btn {
+    background-color: var(--bg-button-success);
+    border: 1px solid var(--border-color-success);
+    color: var(--text-light-strong);
+}
+.message-file-transfer .file-accept-btn:hover {
+    background-color: var(--bg-button-success-hover);
+}
+
+/* Specific styles for Reject and Cancel buttons. */
+.message-file-transfer .file-reject-btn,
+.message-file-transfer .file-cancel-btn {
+    background-color: var(--bg-button-danger);
+    border: 1px solid var(--border-color-danger);
+    color: var(--text-light);
+}
+.message-file-transfer .file-reject-btn:hover,
+.message-file-transfer .file-cancel-btn:hover {
+    background-color: var(--bg-button-danger-hover);
+}
+
+/* Styles for the Download link. */
+.message-file-transfer .file-download-link {
+    color: var(--text-link);
+    background-color: var(--bg-button);
+    border: 1px solid var(--border-color);
+}
+.message-file-transfer .file-download-link:hover {
+    background-color: var(--bg-button-hover);
+    color: #ffffff; /* Brighter link color on hover */
+}
+/* --- End File Transfer Message Styling --- */
+
+
 /* --- Typing Indicator Styling --- */
 /* Styles the container area reserved for the typing indicator below the message area. */
 #typing-indicator-area {
@@ -605,6 +753,7 @@ body {
 /* Styles the container for the message input field and send button. */
 #message-input-area {
     display: flex; /* Use flexbox for side-by-side layout */
+    align-items: center; /* Vertically align items (input, buttons) */
     flex-shrink: 0; /* Prevent this area from shrinking */
     margin-top: 5px; /* Space above the input area (below typing indicator) */
 }
@@ -615,9 +764,45 @@ body {
     margin-right: 8px; /* Space between input field and send button */
 }
 
+/* --- Attach Button Styling --- */
+/* Styles the attach button specifically. */
+#attach-button {
+    background: none; /* Transparent background */
+    border: 1px solid transparent; /* No border by default */
+    color: var(--text-secondary); /* Use secondary color for icon */
+    padding: 6px 8px; /* Adjust padding to align height with input/send */
+    margin-right: 6px; /* Space between attach and input */
+    font-size: 1.3em; /* Make icon larger */
+    cursor: pointer;
+    border-radius: 3px;
+    line-height: 1; /* Match line height */
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+/* Styles the attach button on hover. */
+#attach-button:hover {
+    background-color: var(--bg-button-hover);
+    border-color: var(--border-color-input);
+    color: var(--text-light);
+}
+/* Styles the attach button when actively clicked. */
+#attach-button:active {
+    background-color: var(--bg-button-active);
+}
+/* Styles the attach button when disabled. */
+#attach-button:disabled {
+    background: none;
+    border-color: transparent;
+    color: var(--text-button-disabled);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+/* --- End Attach Button Styling --- */
+
+
 /* Styles the send button specifically within the input area. */
-#message-input-area button {
+#message-input-area #send-button { /* Use more specific selector */
     padding: 8px 15px; /* Standard button padding */
+    flex-shrink: 0; /* Prevent send button from shrinking */
 }
 
 /* --- Settings Pane Styling --- */
@@ -737,8 +922,8 @@ select:disabled {
 }
 
 /* Base styles for all buttons (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #disconnect-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button) {
+/* MODIFIED: Added #attach-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button) {
     padding: 8px 15px; /* Default padding */
     cursor: pointer; /* Indicate interactivity */
     border: 1px solid var(--border-color); /* Default border */
@@ -749,19 +934,19 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button) {
     transition: background-color 0.15s ease, border-color 0.15s ease; /* Smooth transitions */
 }
 /* Styles for buttons on hover (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #disconnect-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):hover {
+/* MODIFIED: Added #attach-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):hover {
     background-color: var(--bg-button-hover); /* Hover background color */
     border-color: #666; /* Slightly lighter border */
 }
 /* Styles for buttons when actively being clicked (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #disconnect-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):active {
+/* MODIFIED: Added #attach-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):active {
      background-color: var(--bg-button-active); /* Active background color */
 }
 /* Styles for disabled buttons (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #disconnect-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):disabled {
+/* MODIFIED: Added #attach-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):disabled {
     background-color: var(--bg-button-disabled); /* Disabled background */
     border-color: var(--border-color-input); /* Use input border color */
     color: var(--text-button-disabled); /* Disabled text color */

@@ -5,7 +5,7 @@
  * and all active/pending chat sessions. It acts as the central coordinator,
  * interacting with the WebSocketClient for network communication, the UIController
  * for display updates, and creating/managing individual Session instances.
- * This version uses ECDH for Perfect Forward Secrecy.
+ * This version uses ECDH for Perfect Forward Secrecy and IndexedDB for file transfers.
  */
 class SessionManager {
     /**
@@ -27,6 +27,10 @@ class SessionManager {
         this.REGISTRATION_TIMEOUT_DURATION = 15000; // 15 seconds to wait for registration success/failure reply.
         this.TYPING_STOP_DELAY = 3000; // Send TYPING_STOP message after 3 seconds of local user inactivity.
         this.TYPING_INDICATOR_TIMEOUT = 5000; // Hide peer's typing indicator after 5 seconds if no further typing messages or actual messages arrive.
+        // NEW: File Transfer Constants
+        this.MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB limit (adjust as needed)
+        this.CHUNK_SIZE = 256 * 1024; // 256 KB chunk size (adjust as needed)
+        this.FILE_ACCEPT_TIMEOUT = 60000; // 60 seconds for receiver to accept/reject file
 
         // --- Application States ---
         // Define possible states for the overall application manager.
@@ -44,7 +48,7 @@ class SessionManager {
         this.STATE_INITIATING_SESSION = 'INITIATING_SESSION'; // Sent Type 1 request, awaiting Type 2 (Accept + Peer ECDH Key).
         this.STATE_DERIVING_KEY_INITIATOR = 'DERIVING_KEY_INITIATOR'; // Received Type 2, deriving keys before sending Type 4.
         this.STATE_KEY_DERIVED_INITIATOR = 'KEY_DERIVED_INITIATOR'; // Keys derived, ready to send Type 4.
-        this.STATE_AWAITING_PEER_KEY = 'AWAITING_PEER_KEY'; // (Obsolete with ECDH flow, covered by DERIVING/RECEIVED_CHALLENGE)
+        this.STATE_AWAITING_CHALLENGE_RESPONSE = 'AWAITING_CHALLENGE_RESPONSE'; // Sent Type 5, awaiting Type 6 (Response). - ADDED for clarity
         this.STATE_RECEIVED_CHALLENGE = 'RECEIVED_CHALLENGE'; // Received Type 5 (Challenge), ready to send Type 6 (Response).
         this.STATE_AWAITING_FINAL_CONFIRMATION = 'AWAITING_FINAL_CONFIRMATION'; // Sent Type 6, awaiting Type 7 (Established).
         // Responder states:
@@ -84,9 +88,17 @@ class SessionManager {
         this.typingStopTimeoutId = new Map(); // Map<peerId, timeoutId>
         // --------------------------------------
 
+        // --- NEW: IndexedDB State ---
+        this.db = null; // Will hold the IndexedDB database object.
+        this.DB_NAME = 'HeliXFileTransferDB';
+        this.DB_VERSION = 1;
+        this.CHUNK_STORE_NAME = 'fileChunks';
+        // ----------------------------
+
         // Log initialization (not wrapped in DEBUG as it's fundamental)
-        console.log('SessionManager initialized (ECDH Mode).');
+        console.log('SessionManager initialized (ECDH Mode, IndexedDB for files).');
         this.updateManagerState(this.STATE_INITIALIZING); // Set initial state.
+        this.initDB(); // Initialize IndexedDB connection.
     }
 
     /**
@@ -153,6 +165,7 @@ class SessionManager {
         // Define the states during which a handshake timeout is relevant (adjust for ECDH flow)
         const handshakeStates = [
             this.STATE_DERIVING_KEY_INITIATOR, this.STATE_KEY_DERIVED_INITIATOR,
+            this.STATE_AWAITING_CHALLENGE_RESPONSE, // Added
             this.STATE_RECEIVED_CHALLENGE, this.STATE_AWAITING_FINAL_CONFIRMATION,
             this.STATE_GENERATING_ACCEPT_KEYS, this.STATE_AWAITING_CHALLENGE,
             this.STATE_DERIVING_KEY_RESPONDER, this.STATE_RECEIVED_INITIATOR_KEY,
@@ -292,12 +305,13 @@ class SessionManager {
     // -----------------------------
 
     /**
-     * Resets a specific session, cleaning up its state, timeouts, UI elements, and typing status.
+     * Resets a specific session, cleaning up its state, timeouts, UI elements, typing status,
+     * and any associated file transfer data (including IndexedDB chunks and object URLs).
      * @param {string} peerId - The ID of the peer whose session needs resetting.
      * @param {boolean} [notifyUserViaAlert=false] - Whether to show a fallback alert to the user with the reason (used if info pane isn't shown).
      * @param {string} [reason="Session reset."] - The reason for the reset (used in logs and optional alert).
      */
-    resetSession(peerId, notifyUserViaAlert = false, reason = "Session reset.") {
+    async resetSession(peerId, notifyUserViaAlert = false, reason = "Session reset.") {
         const session = this.sessions.get(peerId);
         if (session) {
             // Log reset attempt only if DEBUG is enabled.
@@ -309,6 +323,20 @@ class SessionManager {
             this.clearRequestTimeout(session);
             this.clearTypingIndicatorTimeout(session); // Clear peer typing indicator timeout
             this.clearLocalTypingTimeout(peerId); // Clear local typing stop timeout
+
+            // --- NEW: File Transfer Cleanup ---
+            // Iterate through any active/pending transfers for this session and clean them up.
+            if (session.transferStates && session.transferStates.size > 0) {
+                // Log cleanup only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`Cleaning up ${session.transferStates.size} file transfers for session ${peerId}`);
+                const transferIds = Array.from(session.transferStates.keys());
+                for (const transferId of transferIds) {
+                    this.uiController.removeFileTransferMessage(transferId); // Removes UI and revokes URL
+                    await this.deleteChunksFromDB(transferId); // Remove from IndexedDB
+                }
+                session.transferStates.clear(); // Clear the map in the session object
+            }
+            // --- End File Transfer Cleanup ---
 
             // Check if this session was the one being displayed or pending action.
             const wasDisplayed = (this.displayedPeerId === peerId);
@@ -489,7 +517,7 @@ class SessionManager {
             // Use showInfoMessage for better feedback instead of alert
             this.uiController.showInfoMessage(targetId, `Failed to initiate session: ${error.message}`, false);
             // Clean up the failed session attempt.
-            this.resetSession(targetId, false); // notifyUserViaAlert=false as info pane shown
+            await this.resetSession(targetId, false); // notifyUserViaAlert=false
         } finally {
             // Re-enable initiation controls regardless of success/failure
             this.uiController.setInitiationControlsEnabled(true);
@@ -556,7 +584,7 @@ class SessionManager {
             // Use showInfoMessage for better feedback instead of alert
             this.uiController.showInfoMessage(peerId, `Failed to accept session: ${error.message}`, false);
             // Clean up the failed session attempt.
-            this.resetSession(peerId, false); // notifyUserViaAlert=false as info pane shown
+            await this.resetSession(peerId, false); // notifyUserViaAlert=false
         } finally {
             // Re-enable incoming request controls if the pane is still visible (e.g., if error occurred before send)
             if (session?.state === this.STATE_GENERATING_ACCEPT_KEYS) {
@@ -570,7 +598,7 @@ class SessionManager {
      * Sends a Type 3 denial message, plays end sound, and resets the session.
      * @param {string} peerId - The identifier of the peer whose request is being denied.
      */
-    denyRequest(peerId) {
+    async denyRequest(peerId) {
         // Log denial only if DEBUG is enabled.
         if (config.DEBUG) console.log(`Denying session request from: ${peerId}`);
         const session = this.sessions.get(peerId);
@@ -597,7 +625,7 @@ class SessionManager {
         this.uiController.playSound('end');
 
         // Reset the session locally immediately after sending denial.
-        this.resetSession(peerId, false, `Denied request from ${peerId}.`); // notifyUserViaAlert=false
+        await this.resetSession(peerId, false, `Denied request from ${peerId}.`); // notifyUserViaAlert=false
         // Show the default welcome view as the request pane is now gone.
         this.uiController.showDefaultRegisteredView(this.identifier);
     }
@@ -623,7 +651,7 @@ class SessionManager {
             if (config.DEBUG) console.log("Sending PUBLIC_KEY_RESPONSE (Type 4 with ECDH key):", msg);
             if (this.wsClient.sendMessage(msg)) {
                 // Start handshake timeout, waiting for Type 5 (Challenge).
-                session.updateState(this.STATE_AWAITING_CHALLENGE); // Update state after successful send
+                session.updateState(this.STATE_AWAITING_CHALLENGE_RESPONSE); // Update state after successful send - Initiator waits for challenge
                 this.startHandshakeTimeout(session);
                 this.uiController.updateStatus(`Waiting for challenge from ${session.peerId}...`);
             } else {
@@ -636,7 +664,7 @@ class SessionManager {
             this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for feedback
             this.uiController.showInfoMessage(session.peerId, `Handshake Error: ${error.message}`, false);
-            this.resetSession(session.peerId, false); // notifyUserViaAlert=false
+            await this.resetSession(session.peerId, false); // notifyUserViaAlert=false
         }
     }
 
@@ -696,7 +724,7 @@ class SessionManager {
             this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for feedback
             this.uiController.showInfoMessage(session.peerId, `Handshake Error: ${error.message}`, false);
-            this.resetSession(session.peerId, false); // notifyUserViaAlert=false
+            await this.resetSession(session.peerId, false); // notifyUserViaAlert=false
         }
     }
 
@@ -749,7 +777,7 @@ class SessionManager {
             this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for feedback
             this.uiController.showInfoMessage(session.peerId, `Handshake Error: ${error.message}`, false);
-            this.resetSession(session.peerId, false); // notifyUserViaAlert=false
+            await this.resetSession(session.peerId, false); // notifyUserViaAlert=false
         }
     }
 
@@ -786,7 +814,7 @@ class SessionManager {
             this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for feedback
             this.uiController.showInfoMessage(session.peerId, `Handshake Error: ${error.message}`, false);
-            this.resetSession(session.peerId, false); // notifyUserViaAlert=false
+            await this.resetSession(session.peerId, false); // notifyUserViaAlert=false
         }
     }
 
@@ -816,7 +844,7 @@ class SessionManager {
             this.uiController.playSound('error'); // Play error sound
             // Use showInfoMessage for critical key error
             this.uiController.showInfoMessage(peerId, "Encryption Error: Session key is missing. Please restart the session.", false);
-            this.resetSession(peerId, false); // Reset session
+            await this.resetSession(peerId, false); // Reset session
             return;
         }
         // Ensure message text is valid.
@@ -904,7 +932,7 @@ class SessionManager {
      * Sends a Type 9 message, plays end sound, shows an info pane locally, and resets the session.
      * @param {string} peerId - The identifier of the peer whose session to end.
      */
-    endSession(peerId) {
+    async endSession(peerId) {
         // Log attempt only if DEBUG is enabled.
         if (config.DEBUG) console.log(`Attempting to end session with ${peerId}...`);
         const session = this.sessions.get(peerId);
@@ -926,7 +954,7 @@ class SessionManager {
         const reason = `You ended the session with ${peerId}.`;
         this.uiController.showInfoMessage(peerId, reason, false); // Show info, no retry
         // Reset the session locally immediately, but without the alert fallback.
-        this.resetSession(peerId, false, reason); // notifyUserViaAlert = false
+        await this.resetSession(peerId, false, reason); // notifyUserViaAlert = false
     }
 
     /**
@@ -935,7 +963,7 @@ class SessionManager {
      * it resets the session. Otherwise, it just hides the pane and shows the default view.
      * @param {string} peerId - The peer ID associated with the info message.
      */
-    closeInfoMessage(peerId) {
+    async closeInfoMessage(peerId) {
         // Log action only if DEBUG is enabled.
         if (config.DEBUG) console.log(`Closing info message regarding ${peerId}`);
         // Disable info pane controls.
@@ -951,7 +979,7 @@ class SessionManager {
         if (session && terminalStates.includes(session.state)) {
             // If the session is in a terminal state, reset it now.
             if (config.DEBUG) console.log(`Session [${peerId}] is in terminal state (${session.state}). Resetting.`);
-            this.resetSession(peerId, false); // notifyUserViaAlert = false
+            await this.resetSession(peerId, false); // notifyUserViaAlert = false
         } else if (session) {
             // If the session exists but isn't in a terminal state (e.g., user manually ended),
             // it should have already been reset. Just log for debugging.
@@ -1032,13 +1060,13 @@ class SessionManager {
                  // Use showInfoMessage for feedback if send fails
                  this.uiController.showInfoMessage(peerId, "Connection error retrying request.", false);
                  this.uiController.playSound('error'); // Play error sound
-                 this.resetSession(peerId, false); // Reset session
+                 await this.resetSession(peerId, false); // Reset session
             }
         } else {
             // Always log this warning.
             console.warn(`Cannot retry request for ${peerId}, session not found or not in a retryable state (${session?.state}).`);
             // If session exists but wrong state, close the info message.
-            if (session) { this.closeInfoMessage(peerId); }
+            if (session) { await this.closeInfoMessage(peerId); }
             // If session doesn't exist, just show default view.
             else { this.uiController.showDefaultRegisteredView(this.identifier); }
         }
@@ -1050,7 +1078,7 @@ class SessionManager {
      * plays end sound, and resets the session locally.
      * @param {string} peerId - The peer ID of the outgoing request to cancel.
      */
-    cancelRequest(peerId) {
+    async cancelRequest(peerId) {
         // Log action only if DEBUG is enabled.
         if (config.DEBUG) console.log(`Cancelling session request to ${peerId}`);
         const session = this.sessions.get(peerId);
@@ -1068,7 +1096,7 @@ class SessionManager {
             // Play end sound locally.
             this.uiController.playSound('end');
             // Reset the session locally.
-            this.resetSession(peerId, false, `Request to ${peerId} cancelled.`);
+            await this.resetSession(peerId, false, `Request to ${peerId} cancelled.`);
         } else {
             // Always log this warning.
             console.warn(`Cannot cancel request for ${peerId}, session not found or not in initiating state (${session?.state})`);
@@ -1201,6 +1229,7 @@ class SessionManager {
             const relevantStates = [
                 this.STATE_ACTIVE_SESSION,
                 this.STATE_DERIVING_KEY_INITIATOR, this.STATE_KEY_DERIVED_INITIATOR,
+                this.STATE_AWAITING_CHALLENGE_RESPONSE, // Added
                 this.STATE_RECEIVED_CHALLENGE, this.STATE_AWAITING_FINAL_CONFIRMATION,
                 this.STATE_GENERATING_ACCEPT_KEYS, this.STATE_AWAITING_CHALLENGE,
                 this.STATE_DERIVING_KEY_RESPONDER, this.STATE_RECEIVED_INITIATOR_KEY,
@@ -1267,7 +1296,7 @@ class SessionManager {
                 // Alert the user immediately.
                 alert(`Disconnected by Server: ${errorMessage}`);
                 // Immediately trigger the disconnection cleanup and UI reset logic.
-                this.handleDisconnection(errorMessage); // Pass the reason
+                await this.handleDisconnection(errorMessage); // Pass the reason
                 return; // Stop processing this message further.
             }
 
@@ -1309,7 +1338,17 @@ class SessionManager {
                 return;
             }
 
-            // 7. Process Message within the Session
+            // --- Route File Transfer Messages ---
+            if (type >= 12 && type <= 17) {
+                // Log routing only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`Routing file transfer message type ${type} to session [${relevantPeerId}]`);
+                const fileActionResult = await this.processFileTransferMessage(session, type, payload);
+                await this.processMessageResult(session, fileActionResult); // Use existing result processor
+                return; // Processing complete for file transfer messages.
+            }
+            // --- End File Transfer Routing ---
+
+            // 7. Process Regular Chat/Handshake Message within the Session
             // Log routing only if DEBUG is enabled.
             if (config.DEBUG) console.log(`Routing message type ${type} to session [${relevantPeerId}]`);
             // Call the session's processMessage method, which returns an action object.
@@ -1329,11 +1368,12 @@ class SessionManager {
     }
 
     /**
-     * Processes the action object returned by a Session's processMessage method.
+     * Processes the action object returned by a Session's processMessage method
+     * OR by the processFileTransferMessage method.
      * Executes the requested action, such as sending a message, updating the UI,
      * resetting the session, or handling typing indicators. Plays sounds as appropriate.
      * @param {Session} session - The session instance that processed the message.
-     * @param {object} result - The action object returned by session.processMessage (e.g., { action: 'SEND_TYPE_4' }).
+     * @param {object} result - The action object returned (e.g., { action: 'SEND_TYPE_4' }).
      */
     async processMessageResult(session, result) {
         // Ignore if session or result/action is invalid.
@@ -1347,6 +1387,7 @@ class SessionManager {
         // Clear handshake timeout if we are moving out of a handshake state towards active/reset
         const handshakeStates = [
             this.STATE_DERIVING_KEY_INITIATOR, this.STATE_KEY_DERIVED_INITIATOR,
+            this.STATE_AWAITING_CHALLENGE_RESPONSE, // Added
             this.STATE_RECEIVED_CHALLENGE, this.STATE_AWAITING_FINAL_CONFIRMATION,
             this.STATE_GENERATING_ACCEPT_KEYS, this.STATE_AWAITING_CHALLENGE,
             this.STATE_DERIVING_KEY_RESPONDER, this.STATE_RECEIVED_INITIATOR_KEY,
@@ -1385,6 +1426,9 @@ class SessionManager {
 
             // Action indicating session is now active (from initiator's perspective after receiving Type 7):
             case 'SESSION_ACTIVE':
+                // --- FIX: Clear handshake timeout for initiator ---
+                this.clearHandshakeTimeout(session);
+                // -------------------------------------------------
                 this.switchToSessionView(peerId); // Ensure view is updated.
                 this.uiController.playSound('begin'); // Play session begin sound
                 // Log session active message (not wrapped in DEBUG as it's significant)
@@ -1463,11 +1507,11 @@ class SessionManager {
                     this.uiController.showInfoMessage(peerId, result.reason, false);
                     // Reset the session *after* showing the message.
                     // Pass notifyUserViaAlert=false because the info pane handles the notification.
-                    this.resetSession(peerId, false, result.reason);
+                    await this.resetSession(peerId, false, result.reason);
                 } else {
                     // If no specific reason provided (should be rare for RESET action), just reset.
                     // Use alert notification only if requested by the result (e.g., Type 9 disconnect).
-                    this.resetSession(peerId, notifyViaAlert, reason);
+                    await this.resetSession(peerId, notifyViaAlert, reason);
                 }
                 break;
 
@@ -1489,6 +1533,7 @@ class SessionManager {
             case 'NONE':
             default:
                 // No specific action needed, but ensure handshake timeout is cleared if applicable.
+                // FIX: Check wasInHandshake flag here too
                 if (wasInHandshake) this.clearHandshakeTimeout(session);
                 break;
         }
@@ -1636,7 +1681,7 @@ class SessionManager {
      * plays error sound, and shows the registration screen. Prevents running twice if already disconnected.
      * @param {string} [reason=null] - Optional reason for the disconnection, used for status updates.
      */
-    handleDisconnection(reason = null) {
+    async handleDisconnection(reason = null) {
          // Prevent running the cleanup logic multiple times
          if (this.managerState === this.STATE_DISCONNECTED) {
              // Log skipped call only if DEBUG is enabled.
@@ -1651,11 +1696,18 @@ class SessionManager {
          this.clearRegistrationTimeout(); // Clear registration timeout if it was running.
          const currentActivePeer = this.displayedPeerId; // Store potentially active peer.
 
+         // --- NEW: Cleanup active file transfers before resetting sessions ---
+         await this.handleDisconnectionCleanup();
+         // ------------------------------------------------------------------
+
          // If there were active sessions, reset them all.
          if (this.sessions.size > 0) {
              const peerIds = Array.from(this.sessions.keys()); // Get all peer IDs.
              // Reset each session without individual user notification.
-             peerIds.forEach(peerId => this.resetSession(peerId, false));
+             // resetSession now handles file transfer cleanup internally as well.
+             for (const peerId of peerIds) {
+                 await this.resetSession(peerId, false);
+             }
          }
 
          // Update manager state and clear session tracking variables.
@@ -1708,8 +1760,38 @@ class SessionManager {
             this.uiController.showActiveChat(peerId);
             // Populate message area with history for this session.
             session.messages.forEach(msg => {
-                this.uiController.addMessage(msg.sender, msg.text, msg.type);
+                // Check if it's a file transfer message (needs a way to distinguish, maybe msg.isTransfer?)
+                // For now, assume addMessage handles regular text
+                if (msg.type !== 'file') { // Assuming a 'file' type isn't used for history yet
+                     this.uiController.addMessage(msg.sender, msg.text, msg.type);
+                } else {
+                    // TODO: Need logic to re-render file transfer messages from history if needed
+                }
             });
+            // Re-render any active file transfers for this session
+            if (session.transferStates) {
+                session.transferStates.forEach((state, transferId) => {
+                    // Determine sender/receiver based on state.isSender
+                    this.uiController.addFileTransferMessage(transferId, peerId, state.fileName, state.fileSize, state.isSender);
+                    this.uiController.updateFileTransferStatus(transferId, state.status);
+                    if (state.progress > 0) {
+                        this.uiController.updateFileTransferProgress(transferId, state.progress);
+                    }
+                    // TODO: Show appropriate buttons based on state (e.g., if status is 'complete' and !isSender, show download)
+                    if (state.status === 'complete' && !state.isSender && state.blobUrl) {
+                         // Need to recreate blob from DB if page reloaded, or store blobUrl in state?
+                         // For now, assume blobUrl is available if state is complete (might need adjustment)
+                         // This part needs careful thought on how to handle page reloads vs simple view switching
+                         // Let's assume for now we don't re-render download links on switch, only on completion.
+                    } else if (state.status === 'pending_acceptance' && !state.isSender) {
+                        // Show accept/reject (handled by addFileTransferMessage)
+                    } else if ((state.status === 'initiating' || state.status === 'uploading') && state.isSender) {
+                        // Show cancel (handled by addFileTransferMessage)
+                    } else {
+                        this.uiController.hideFileTransferActions(transferId);
+                    }
+                });
+            }
             this.uiController.updateStatus(`Session active with ${peerId}.`);
         } else if (session.state === this.STATE_REQUEST_RECEIVED) {
             // If switching to a session that has an incoming request needing action.
@@ -1744,6 +1826,8 @@ class SessionManager {
                 statusText = `Session with ${peerId}: Deriving keys...`;
             } else if (session.state === this.STATE_AWAITING_CHALLENGE) {
                 statusText = `Session with ${peerId}: Waiting for peer's key...`;
+            } else if (session.state === this.STATE_AWAITING_CHALLENGE_RESPONSE) { // Added
+                statusText = `Session with ${peerId}: Waiting for challenge response...`;
             } else if (session.state === this.STATE_RECEIVED_CHALLENGE) {
                 statusText = `Session with ${peerId}: Received challenge, preparing response...`;
             } else if (session.state === this.STATE_AWAITING_FINAL_CONFIRMATION) {
@@ -1762,4 +1846,861 @@ class SessionManager {
     getActivePeerId() {
         return this.displayedPeerId;
     }
-}
+
+    // --- NEW: File Transfer Logic ---
+
+    /**
+     * Handles the file selection event from the hidden file input.
+     * Initiates the file transfer request process.
+     * @param {Event} event - The file input change event.
+     */
+    async handleFileSelection(event) {
+        const fileInput = event.target;
+        if (!fileInput.files || fileInput.files.length === 0) {
+            // Log only if DEBUG is enabled.
+            if (config.DEBUG) console.log("File selection cancelled or no file chosen.");
+            return; // No file selected
+        }
+        const file = fileInput.files[0];
+        // Reset the file input value to allow selecting the same file again later.
+        fileInput.value = '';
+
+        const targetId = this.getActivePeerId();
+        if (!targetId) {
+            alert("No active chat session selected to send the file to.");
+            return;
+        }
+        const session = this.sessions.get(targetId);
+        if (!session || session.state !== this.STATE_ACTIVE_SESSION) {
+            alert(`Session with ${targetId} is not active. Cannot send file.`);
+            return;
+        }
+
+        // Log file details only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`File selected: Name=${file.name}, Size=${file.size}, Type=${file.type}`);
+
+        // Check file size
+        if (file.size > this.MAX_FILE_SIZE) {
+            alert(`File is too large (${this.uiController.formatFileSize(file.size)}). Maximum size is ${this.uiController.formatFileSize(this.MAX_FILE_SIZE)}.`);
+            return;
+        }
+        if (file.size === 0) {
+            alert("Cannot send empty files.");
+            return;
+        }
+
+        // Generate unique ID for this transfer
+        const transferId = crypto.randomUUID();
+        // Log transfer initiation only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Initiating file transfer ${transferId} to ${targetId}`);
+
+        // Store initial transfer state in the session
+        session.addTransferState(transferId, {
+            file: file,
+            status: 'initiating', // Initial status
+            progress: 0,
+            fileName: file.name, // Store metadata for receiver UI
+            fileSize: file.size,
+            fileType: file.type,
+            isSender: true // Mark this client as the sender for this transfer
+        });
+
+        // Display initial status in UI
+        this.uiController.addFileTransferMessage(transferId, targetId, file.name, file.size, true); // true for isSender
+
+        // Send the request message to the peer
+        const requestPayload = {
+            targetId: targetId,
+            senderId: this.identifier,
+            transferId: transferId,
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type || 'application/octet-stream' // Provide a default type
+        };
+        if (this.wsClient.sendMessage({ type: 12, payload: requestPayload })) {
+            this.uiController.updateStatus(`Requesting file transfer to ${targetId}...`);
+            // TODO: Add timeout for acceptance? (e.g., this.startFileAcceptTimeout(transferId))
+        } else {
+            this.uiController.updateFileTransferStatus(transferId, "Error: Failed to send transfer request.");
+            this.uiController.playSound('file_error');
+            session.removeTransferState(transferId); // Clean up state
+            // Optionally remove the UI message or leave it with the error
+        }
+    }
+
+    /**
+     * Starts the process of reading, encrypting, and sending file chunks.
+     * @param {Session} session - The session object.
+     * @param {string} transferId - The ID of the file transfer to start uploading.
+     */
+    async startFileUpload(session, transferId) {
+        const transferState = session.getTransferState(transferId);
+        if (!transferState || !transferState.file || transferState.status !== 'uploading') {
+            // Always log this warning.
+            console.warn(`Cannot start upload for transfer ${transferId}: Invalid state or missing file.`);
+            return;
+        }
+
+        const file = transferState.file;
+        const peerId = session.peerId;
+        let chunkIndex = 0;
+        let offset = 0;
+        // Log start only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Starting file upload for ${transferId} (${file.name})`);
+        this.uiController.updateFileTransferStatus(transferId, "Uploading 0%...");
+        this.uiController.updateFileTransferProgress(transferId, 0); // Show progress bar
+
+        try {
+            while (offset < file.size) {
+                // Check if transfer was cancelled externally (e.g., disconnect)
+                const currentState = session.getTransferState(transferId);
+                if (!currentState || currentState.status !== 'uploading') {
+                    // Always log cancellation/error during upload.
+                    console.log(`Upload for transfer ${transferId} aborted. Status: ${currentState?.status}`);
+                    return; // Stop uploading
+                }
+
+                const end = Math.min(offset + this.CHUNK_SIZE, file.size);
+                const chunkBlob = file.slice(offset, end);
+                const chunkBuffer = await chunkBlob.arrayBuffer();
+
+                // Encrypt the chunk
+                const encryptedResult = await session.cryptoModule.encryptAES(chunkBuffer);
+                if (!encryptedResult) {
+                    throw new Error(`Encryption failed for chunk ${chunkIndex}`);
+                }
+
+                // Prepare payload
+                const chunkPayload = {
+                    targetId: peerId,
+                    senderId: this.identifier,
+                    transferId: transferId,
+                    chunkIndex: chunkIndex,
+                    iv: session.cryptoModule.arrayBufferToBase64(encryptedResult.iv),
+                    data: session.cryptoModule.arrayBufferToBase64(encryptedResult.encryptedBuffer)
+                };
+
+                // Send the chunk
+                if (!this.wsClient.sendMessage({ type: 15, payload: chunkPayload })) {
+                    throw new Error(`Connection error sending chunk ${chunkIndex}`);
+                }
+
+                // Update progress
+                offset += chunkBuffer.byteLength;
+                const progressPercent = (offset / file.size) * 100;
+                transferState.progress = progressPercent; // Update state object
+                this.uiController.updateFileTransferProgress(transferId, progressPercent);
+                this.uiController.updateFileTransferStatus(transferId, `Uploading ${progressPercent.toFixed(1)}%...`);
+
+                chunkIndex++;
+
+                // Optional: Add a small delay to prevent flooding the event loop/network
+                // await new Promise(resolve => setTimeout(resolve, 5));
+            }
+
+            // All chunks sent, send completion message
+            // Log completion only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`Finished sending chunks for transfer ${transferId}. Sending completion message.`);
+            const completePayload = { targetId: peerId, senderId: this.identifier, transferId: transferId };
+            if (this.wsClient.sendMessage({ type: 16, payload: completePayload })) {
+                transferState.status = 'complete';
+                this.uiController.updateFileTransferStatus(transferId, "Upload complete. Waiting for peer confirmation.");
+                this.uiController.hideFileTransferActions(transferId); // Hide cancel button
+            } else {
+                throw new Error("Connection error sending completion message.");
+            }
+
+        } catch (error) {
+            // Always log upload errors.
+            console.error(`Error during file upload for ${transferId}:`, error);
+            this.uiController.playSound('file_error');
+            this.uiController.updateFileTransferStatus(transferId, `Error: ${error.message}`);
+            this.uiController.hideFileTransferActions(transferId);
+            // Send error notification to peer
+            const errorPayload = { targetId: peerId, senderId: this.identifier, transferId: transferId, error: `Upload failed: ${error.message}` };
+            this.wsClient.sendMessage({ type: 17, payload: errorPayload });
+            // Clean up local state
+            session.removeTransferState(transferId);
+        }
+    }
+
+    /**
+     * Handles the user clicking the Accept button for an incoming file transfer.
+     * @param {string} transferId - The ID of the transfer being accepted.
+     */
+    async handleAcceptFile(transferId) {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Handling accept for file transfer ${transferId}`);
+        // Find the session associated with this transfer (need senderId from transfer state)
+        let session = null;
+        let transferState = null;
+        for (const s of this.sessions.values()) {
+            transferState = s.getTransferState(transferId);
+            if (transferState) {
+                session = s;
+                break;
+            }
+        }
+
+        if (!session || !transferState || transferState.status !== 'pending_acceptance') {
+            // Always log this warning.
+            console.warn(`Cannot accept file transfer ${transferId}: Session or transfer state not found or invalid status.`);
+            return;
+        }
+
+        const peerId = transferState.senderId; // Get the sender's ID
+
+        // Update UI immediately
+        this.uiController.updateFileTransferStatus(transferId, "Accepted. Waiting for data...");
+        this.uiController.hideFileTransferActions(transferId); // Hide accept/reject
+
+        // Update internal state
+        transferState.status = 'accepted'; // Or 'receiving'
+
+        // Send acceptance message back to the sender
+        const acceptPayload = { targetId: peerId, senderId: this.identifier, transferId: transferId };
+        if (!this.wsClient.sendMessage({ type: 13, payload: acceptPayload })) {
+            this.uiController.updateFileTransferStatus(transferId, "Error: Failed to send acceptance.");
+            this.uiController.playSound('file_error');
+            transferState.status = 'error'; // Revert status
+            // Clean up DB? Probably not needed yet.
+        } else {
+            // Log success only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`Sent acceptance for transfer ${transferId} to ${peerId}`);
+            // Optionally play a sound
+            // this.uiController.playSound('notification');
+        }
+    }
+
+    /**
+     * Handles the user clicking the Reject button for an incoming file transfer.
+     * @param {string} transferId - The ID of the transfer being rejected.
+     */
+    async handleRejectFile(transferId) {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Handling reject for file transfer ${transferId}`);
+        // Find the session and transfer state
+        let session = null;
+        let transferState = null;
+        for (const s of this.sessions.values()) {
+            transferState = s.getTransferState(transferId);
+            if (transferState) {
+                session = s;
+                break;
+            }
+        }
+
+        if (!session || !transferState || transferState.status !== 'pending_acceptance') {
+            // Always log this warning.
+            console.warn(`Cannot reject file transfer ${transferId}: Session or transfer state not found or invalid status.`);
+            return;
+        }
+
+        const peerId = transferState.senderId;
+
+        // Update UI
+        this.uiController.updateFileTransferStatus(transferId, "Rejected.");
+        this.uiController.hideFileTransferActions(transferId);
+        this.uiController.playSound('end'); // Use end sound for rejection
+
+        // Send rejection message
+        const rejectPayload = { targetId: peerId, senderId: this.identifier, transferId: transferId };
+        this.wsClient.sendMessage({ type: 14, payload: rejectPayload }); // Send best effort
+
+        // Clean up local state
+        session.removeTransferState(transferId);
+        await this.deleteChunksFromDB(transferId); // Clean up any potential DB entries
+    }
+
+    /**
+     * Handles the user clicking the Cancel button for an ongoing file transfer (sender side).
+     * @param {string} transferId - The ID of the transfer being cancelled.
+     */
+    async handleCancelTransfer(transferId) {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Handling cancel for file transfer ${transferId}`);
+        // Find the session and transfer state
+        let session = null;
+        let transferState = null;
+        for (const s of this.sessions.values()) {
+            transferState = s.getTransferState(transferId);
+            if (transferState && transferState.isSender) { // Ensure it's an outgoing transfer
+                session = s;
+                break;
+            }
+        }
+
+        // Only allow cancellation if initiating or uploading
+        const cancellableStates = ['initiating', 'uploading'];
+        if (!session || !transferState || !cancellableStates.includes(transferState.status)) {
+            // Always log this warning.
+            console.warn(`Cannot cancel file transfer ${transferId}: Session/transfer not found or invalid status (${transferState?.status}).`);
+            return;
+        }
+
+        const peerId = session.peerId;
+
+        // Update UI
+        this.uiController.updateFileTransferStatus(transferId, "Cancelled.");
+        this.uiController.hideFileTransferActions(transferId);
+        this.uiController.playSound('end'); // Use end sound for cancel
+
+        // Update internal state immediately to stop upload loop if running
+        transferState.status = 'cancelled';
+
+        // Send error/cancel message to peer
+        const errorPayload = { targetId: peerId, senderId: this.identifier, transferId: transferId, error: "Transfer cancelled by sender." };
+        this.wsClient.sendMessage({ type: 17, payload: errorPayload }); // Send best effort
+
+        // Clean up local state
+        session.removeTransferState(transferId);
+        // No DB cleanup needed for sender
+    }
+
+    /**
+     * Processes incoming file transfer related messages (Types 12-17).
+     * Routes to specific internal handlers.
+     * @param {Session} session - The session object associated with the sender.
+     * @param {number} type - The message type (12-17).
+     * @param {object} payload - The message payload.
+     * @returns {Promise<object>} An action object for processMessageResult.
+     */
+    async processFileTransferMessage(session, type, payload) {
+        // Log processing attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log(`Session [${session.peerId}] Processing file transfer message type ${type}`);
+        }
+        try {
+            switch (type) {
+                case 12: return await this._handleFileTransferRequest(session, payload);
+                case 13: return await this._handleFileTransferAccept(session, payload);
+                case 14: return await this._handleFileTransferReject(session, payload);
+                case 15: return await this._handleFileChunk(session, payload);
+                case 16: return await this._handleFileTransferComplete(session, payload);
+                case 17: return await this._handleFileTransferError(session, payload);
+                default:
+                    // Always log unhandled types as warnings.
+                    console.warn(`Session [${session.peerId}] Received unhandled file transfer message type: ${type}`);
+                    return { action: 'NONE' };
+            }
+        } catch (error) {
+            // Always log unexpected errors.
+            console.error(`Session [${session.peerId}] Unexpected error processing file transfer message type ${type}:`, error);
+            // Return a generic RESET or error display action if appropriate
+            return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Internal error processing file transfer: ${error.message}` };
+        }
+    }
+
+    // --- Internal File Transfer Message Handlers ---
+
+    async _handleFileTransferRequest(session, payload) {
+        const { transferId, fileName, fileSize, fileType, senderId } = payload;
+        // Log request only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Received file transfer request ${transferId} from ${senderId}: ${fileName} (${fileSize} bytes)`);
+
+        // Basic validation
+        if (!transferId || !fileName || fileSize === undefined || !senderId) {
+            // Always log validation warnings.
+            console.warn(`Invalid file transfer request payload from ${senderId}:`, payload);
+            return { action: 'NONE' }; // Ignore invalid request
+        }
+
+        // Check if a transfer with this ID already exists (shouldn't happen normally)
+        if (session.getTransferState(transferId)) {
+             // Always log this warning.
+             console.warn(`Duplicate file transfer request received for ID ${transferId}. Ignoring.`);
+             return { action: 'NONE' };
+        }
+
+        // Store initial state for the incoming transfer
+        session.addTransferState(transferId, {
+            status: 'pending_acceptance',
+            progress: 0,
+            fileName: fileName,
+            fileSize: fileSize,
+            fileType: fileType,
+            senderId: senderId, // Store who sent it
+            isSender: false // Mark this client as the receiver
+        });
+
+        // Display the request in the UI
+        this.uiController.addFileTransferMessage(transferId, senderId, fileName, fileSize, false); // false for isSender
+        this.uiController.playSound('file_request'); // Play notification sound
+
+        // If the chat isn't active, mark as unread
+        if (this.displayedPeerId !== session.peerId) {
+            this.uiController.setUnreadIndicator(session.peerId, true);
+        }
+
+        // TODO: Add timeout for user to accept/reject?
+
+        return { action: 'NONE' }; // No further action needed until user interacts
+    }
+
+    async _handleFileTransferAccept(session, payload) {
+        const { transferId } = payload;
+        // Log acceptance only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Received acceptance for file transfer ${transferId} from ${session.peerId}`);
+
+        const transferState = session.getTransferState(transferId);
+        if (!transferState || !transferState.isSender || transferState.status !== 'initiating') {
+            // Always log this warning.
+            console.warn(`Received unexpected acceptance for transfer ${transferId} or invalid state.`);
+            return { action: 'NONE' };
+        }
+
+        // Update state and UI
+        transferState.status = 'uploading';
+        this.uiController.updateFileTransferStatus(transferId, "Peer accepted. Starting upload...");
+        this.uiController.hideFileTransferActions(transferId); // Hide cancel button temporarily? Or leave it?
+
+        // Start the upload process
+        this.startFileUpload(session, transferId); // Intentionally not awaited
+
+        return { action: 'NONE' };
+    }
+
+    async _handleFileTransferReject(session, payload) {
+        const { transferId } = payload;
+        // Log rejection only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Received rejection for file transfer ${transferId} from ${session.peerId}`);
+
+        const transferState = session.getTransferState(transferId);
+        if (!transferState || !transferState.isSender || transferState.status !== 'initiating') {
+            // Always log this warning.
+            console.warn(`Received unexpected rejection for transfer ${transferId} or invalid state.`);
+            return { action: 'NONE' };
+        }
+
+        // Update state and UI
+        transferState.status = 'rejected';
+        this.uiController.updateFileTransferStatus(transferId, "Peer rejected the file transfer.");
+        this.uiController.hideFileTransferActions(transferId); // Hide cancel button
+        this.uiController.playSound('end'); // Play end/reject sound
+
+        // Clean up local state
+        session.removeTransferState(transferId);
+        // No DB cleanup needed for sender
+
+        return { action: 'NONE' };
+    }
+
+    async _handleFileChunk(session, payload) {
+        const { transferId, chunkIndex, iv, data } = payload;
+        // Log chunk receipt only if DEBUG is enabled (can be very verbose)
+        // if (config.DEBUG) console.log(`Received chunk ${chunkIndex} for transfer ${transferId}`);
+
+        const transferState = session.getTransferState(transferId);
+        // Only process if we are the receiver and expecting data
+        if (!transferState || transferState.isSender || (transferState.status !== 'accepted' && transferState.status !== 'receiving')) {
+            // Always log this warning.
+            console.warn(`Received unexpected chunk for transfer ${transferId} or invalid state (${transferState?.status}).`);
+            // Maybe send an error back?
+            return { action: 'NONE' };
+        }
+
+        // Update status if this is the first chunk
+        if (transferState.status === 'accepted') {
+            transferState.status = 'receiving';
+        }
+
+        try {
+            // Decode Base64
+            const ivBuffer = session.cryptoModule.base64ToArrayBuffer(iv);
+            const encryptedBuffer = session.cryptoModule.base64ToArrayBuffer(data);
+
+            // Decrypt chunk
+            const decryptedChunk = await session.cryptoModule.decryptAES(encryptedBuffer, new Uint8Array(ivBuffer));
+            if (!decryptedChunk) {
+                throw new Error(`Decryption failed for chunk ${chunkIndex}`);
+            }
+
+            // Store chunk in IndexedDB
+            await this.addChunkToDB(transferId, chunkIndex, decryptedChunk);
+
+            // Update progress (calculate based on index and total size)
+            // Note: We don't know the total number of chunks easily, so use size.
+            const progressPercent = Math.min(100, ((chunkIndex + 1) * this.CHUNK_SIZE / transferState.fileSize) * 100);
+            transferState.progress = progressPercent; // Update state
+            this.uiController.updateFileTransferProgress(transferId, progressPercent);
+            this.uiController.updateFileTransferStatus(transferId, `Receiving ${progressPercent.toFixed(1)}%...`);
+
+        } catch (error) {
+            // Always log errors during chunk processing.
+            console.error(`Error processing chunk ${chunkIndex} for transfer ${transferId}:`, error);
+            this.uiController.playSound('file_error');
+            this.uiController.updateFileTransferStatus(transferId, `Error: ${error.message}`);
+            this.uiController.hideFileTransferActions(transferId);
+            // Send error notification to peer
+            const errorPayload = { targetId: transferState.senderId, senderId: this.identifier, transferId: transferId, error: `Failed to process chunk ${chunkIndex}: ${error.message}` };
+            this.wsClient.sendMessage({ type: 17, payload: errorPayload });
+            // Clean up local state and DB
+            await this.deleteChunksFromDB(transferId);
+            session.removeTransferState(transferId);
+        }
+
+        return { action: 'NONE' };
+    }
+
+    async _handleFileTransferComplete(session, payload) {
+        const { transferId } = payload;
+        // Log completion signal only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Received transfer complete signal for ${transferId}`);
+
+        const transferState = session.getTransferState(transferId);
+        // Only process if we are the receiver and were receiving
+        if (!transferState || transferState.isSender || transferState.status !== 'receiving') {
+            // Always log this warning.
+            console.warn(`Received unexpected completion for transfer ${transferId} or invalid state (${transferState?.status}).`);
+            return { action: 'NONE' };
+        }
+
+        this.uiController.updateFileTransferStatus(transferId, "Transfer complete. Assembling file...");
+        this.uiController.updateFileTransferProgress(transferId, 100); // Ensure progress shows 100%
+
+        try {
+            // Retrieve all chunks from IndexedDB
+            const chunks = await this.getChunksFromDB(transferId);
+            if (!chunks || chunks.length === 0) {
+                throw new Error("No chunks found in database for assembly.");
+            }
+
+            // Verify completeness (simple count check for now)
+            const expectedChunks = Math.ceil(transferState.fileSize / this.CHUNK_SIZE);
+            if (chunks.length !== expectedChunks) {
+                // More robust check: ensure all indices from 0 to expectedChunks-1 are present.
+                const receivedIndices = new Set(chunks.map(c => c.chunkIndex));
+                const missing = [];
+                for (let i = 0; i < expectedChunks; i++) {
+                    if (!receivedIndices.has(i)) {
+                        missing.push(i);
+                    }
+                }
+                if (missing.length > 0) {
+                    throw new Error(`File assembly failed: Missing chunks (${missing.join(', ')}). Expected ${expectedChunks}, got ${chunks.length}.`);
+                }
+                 // Always log this warning.
+                 console.warn(`Chunk count mismatch for ${transferId}. Expected ${expectedChunks}, got ${chunks.length}. Proceeding anyway.`);
+            }
+
+            // Sort chunks by index - IMPORTANT!
+            chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+            // Assemble Blob
+            const blob = new Blob(chunks.map(c => c.data), { type: transferState.fileType });
+
+            // Verify final blob size matches expected size
+            if (blob.size !== transferState.fileSize) {
+                throw new Error(`Assembled file size mismatch. Expected ${transferState.fileSize}, got ${blob.size}.`);
+            }
+
+            // Show download link
+            this.uiController.showFileDownloadLink(transferId, blob, transferState.fileName);
+            this.uiController.updateFileTransferStatus(transferId, "Download ready.");
+            this.uiController.playSound('file_complete');
+
+            // Clean up DB and session state *after* successful assembly and link creation
+            await this.deleteChunksFromDB(transferId);
+            transferState.status = 'complete'; // Mark as complete in session state before removing? Or just remove?
+            // Let's keep the state briefly for potential UI interactions, cleanup happens on reset/disconnect
+            // session.removeTransferState(transferId); // Or keep it until session reset?
+
+        } catch (error) {
+            // Always log assembly errors.
+            console.error(`Error assembling file for transfer ${transferId}:`, error);
+            this.uiController.playSound('file_error');
+            this.uiController.updateFileTransferStatus(transferId, `Error: ${error.message}`);
+            this.uiController.hideFileTransferActions(transferId);
+            // Send error notification to peer
+            const errorPayload = { targetId: transferState.senderId, senderId: this.identifier, transferId: transferId, error: `File assembly failed: ${error.message}` };
+            this.wsClient.sendMessage({ type: 17, payload: errorPayload });
+            // Clean up local state and DB
+            await this.deleteChunksFromDB(transferId);
+            session.removeTransferState(transferId);
+        }
+
+        return { action: 'NONE' };
+    }
+
+    async _handleFileTransferError(session, payload) {
+        const { transferId, error } = payload;
+        const errorMessage = error || "Peer reported an error.";
+        // Log error only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Received error for file transfer ${transferId} from ${session.peerId}: ${errorMessage}`);
+
+        const transferState = session.getTransferState(transferId);
+        if (!transferState) {
+            // Always log this warning.
+            console.warn(`Received error for unknown transfer ${transferId}.`);
+            return { action: 'NONE' };
+        }
+
+        // Update UI
+        this.uiController.updateFileTransferStatus(transferId, `Error: ${errorMessage}`);
+        this.uiController.hideFileTransferActions(transferId);
+        this.uiController.playSound('file_error');
+
+        // Clean up local state and potentially DB
+        await this.deleteChunksFromDB(transferId); // Attempt DB cleanup regardless of sender/receiver
+        session.removeTransferState(transferId);
+
+        return { action: 'NONE' };
+    }
+
+    // --- IndexedDB Helper Methods ---
+
+    /**
+     * Initializes the IndexedDB database connection.
+     */
+    async initDB() {
+        return new Promise((resolve, reject) => {
+            // Log DB init only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`Initializing IndexedDB: ${this.DB_NAME} v${this.DB_VERSION}`);
+
+            // Check for IndexedDB support
+            if (!window.indexedDB) {
+                console.error("IndexedDB not supported by this browser.");
+                alert("File transfer requires IndexedDB support, which is not available in your browser.");
+                reject("IndexedDB not supported.");
+                return;
+            }
+
+            const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
+
+            request.onerror = (event) => {
+                // Always log DB errors.
+                console.error("IndexedDB error:", event.target.error);
+                reject(`IndexedDB error: ${event.target.error}`);
+            };
+
+            request.onsuccess = (event) => {
+                this.db = event.target.result;
+                // Log success only if DEBUG is enabled.
+                if (config.DEBUG) console.log("IndexedDB initialized successfully.");
+                resolve(this.db);
+            };
+
+            request.onupgradeneeded = (event) => {
+                // Log upgrade only if DEBUG is enabled.
+                if (config.DEBUG) console.log("IndexedDB upgrade needed.");
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(this.CHUNK_STORE_NAME)) {
+                    // Create object store for chunks: { transferId, chunkIndex, data }
+                    // Use a composite key [transferId, chunkIndex] for uniqueness and efficient lookup/sorting.
+                    const store = db.createObjectStore(this.CHUNK_STORE_NAME, { keyPath: ['transferId', 'chunkIndex'] });
+                    // Optional: Create an index on transferId alone for easy deletion of all chunks for a transfer.
+                    store.createIndex('transferIdIndex', 'transferId', { unique: false });
+                    // Log store creation only if DEBUG is enabled.
+                    if (config.DEBUG) console.log(`Object store '${this.CHUNK_STORE_NAME}' created.`);
+                }
+            };
+        });
+    }
+
+    /**
+     * Gets a transaction and object store reference.
+     * @param {'readonly' | 'readwrite'} mode - The transaction mode.
+     * @returns {IDBObjectStore} The object store instance.
+     * @throws {Error} If DB is not initialized.
+     */
+    _getStore(mode) {
+        if (!this.db) {
+            throw new Error("IndexedDB is not initialized.");
+        }
+        const transaction = this.db.transaction(this.CHUNK_STORE_NAME, mode);
+        return transaction.objectStore(this.CHUNK_STORE_NAME);
+    }
+
+    /**
+     * Adds a file chunk to the IndexedDB store.
+     * Ensures the promise resolves only after the transaction completes.
+     * @param {string} transferId - The transfer ID.
+     * @param {number} chunkIndex - The index of the chunk.
+     * @param {ArrayBuffer} data - The decrypted chunk data.
+     * @returns {Promise<void>}
+     */
+    async addChunkToDB(transferId, chunkIndex, data) {
+        return new Promise((resolve, reject) => {
+            if (!this.db) {
+                // Always log this error.
+                console.error("Attempted to add chunk to DB, but DB is not initialized.");
+                return reject(new Error("IndexedDB not initialized."));
+            }
+            try {
+                // Start transaction
+                const transaction = this.db.transaction(this.CHUNK_STORE_NAME, 'readwrite');
+                const store = transaction.objectStore(this.CHUNK_STORE_NAME);
+
+                // Log transaction start only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`DB: Starting transaction to add chunk ${chunkIndex} for ${transferId}`);
+
+                // Handle transaction errors
+                transaction.onerror = (event) => {
+                    // Always log DB errors.
+                    console.error(`DB: Transaction error adding chunk ${chunkIndex} for ${transferId}:`, event.target.error);
+                    reject(event.target.error || new Error("IndexedDB transaction failed"));
+                };
+
+                // Handle transaction completion
+                transaction.oncomplete = () => {
+                    // Log completion only if DEBUG is enabled.
+                    if (config.DEBUG) console.log(`DB: Transaction complete for adding chunk ${chunkIndex} for ${transferId}.`);
+                    resolve();
+                };
+
+                // Queue the put request within the transaction
+                const request = store.put({ transferId, chunkIndex, data });
+
+                // Handle request-specific errors (less common if transaction handles it)
+                request.onerror = (event) => {
+                    // Always log DB errors.
+                    console.error(`DB: Request error adding chunk ${chunkIndex} for ${transferId}:`, event.target.error);
+                    // Don't reject here, let the transaction error handler do it.
+                    // reject(event.target.error);
+                };
+                 request.onsuccess = () => {
+                     // Log put success only if DEBUG is enabled.
+                     if (config.DEBUG) console.log(`DB: Put request successful for chunk ${chunkIndex} for ${transferId}. Waiting for transaction commit...`);
+                 };
+
+            } catch (error) {
+                 // Always log errors getting store/starting transaction.
+                 console.error("Error accessing IndexedDB store for adding chunk:", error);
+                 reject(error);
+            }
+        });
+    }
+
+    /**
+     * Retrieves all chunks for a given transfer ID from IndexedDB.
+     * @param {string} transferId - The transfer ID.
+     * @returns {Promise<Array<{transferId: string, chunkIndex: number, data: ArrayBuffer}>>} A promise resolving to an array of chunk objects.
+     */
+    async getChunksFromDB(transferId) {
+        return new Promise((resolve, reject) => {
+             if (!this.db) {
+                // Always log this error.
+                console.error("Attempted to get chunks from DB, but DB is not initialized.");
+                return reject(new Error("IndexedDB not initialized."));
+            }
+            try {
+                const store = this._getStore('readonly');
+                // Use the index on transferId to get all matching records
+                const index = store.index('transferIdIndex');
+                const request = index.getAll(transferId); // Get all records matching the transferId
+
+                request.onsuccess = (event) => {
+                    // Log retrieval only if DEBUG is enabled.
+                    if (config.DEBUG) console.log(`DB: Retrieved ${event.target.result.length} chunks for transfer ${transferId} from DB.`);
+                    resolve(event.target.result); // result is an array of chunk objects
+                };
+                request.onerror = (event) => {
+                    // Always log DB errors.
+                    console.error(`DB: Error retrieving chunks for ${transferId} from DB:`, event.target.error);
+                    reject(event.target.error);
+                };
+            } catch (error) {
+                 // Always log errors getting store.
+                 console.error("Error accessing IndexedDB store for getting chunks:", error);
+                 reject(error);
+            }
+        });
+    }
+
+    /**
+     * Deletes all chunks associated with a given transfer ID from IndexedDB.
+     * @param {string} transferId - The transfer ID.
+     * @returns {Promise<void>}
+     */
+    async deleteChunksFromDB(transferId) {
+        return new Promise((resolve, reject) => {
+             if (!this.db) {
+                // Always log this warning.
+                console.warn("Attempted to delete chunks from DB, but DB is not initialized.");
+                // Resolve successfully as there's nothing to delete if DB isn't there.
+                return resolve();
+            }
+            try {
+                const transaction = this.db.transaction(this.CHUNK_STORE_NAME, 'readwrite');
+                const store = transaction.objectStore(this.CHUNK_STORE_NAME);
+                // Use the index to efficiently delete all chunks for the transferId
+                const index = store.index('transferIdIndex');
+                const request = index.openKeyCursor(IDBKeyRange.only(transferId)); // Cursor to find keys matching transferId
+                let deleteCount = 0;
+
+                // Log transaction start only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`DB: Starting transaction to delete chunks for ${transferId}`);
+
+                transaction.onerror = (event) => {
+                    // Always log DB errors.
+                    console.error(`DB: Transaction error deleting chunks for ${transferId}:`, event.target.error);
+                    reject(event.target.error || new Error("IndexedDB transaction failed"));
+                };
+
+                transaction.oncomplete = () => {
+                    // Log completion only if DEBUG is enabled.
+                    if (config.DEBUG) console.log(`DB: Transaction complete for deleting ${deleteCount} chunks for ${transferId}.`);
+                    resolve();
+                };
+
+                request.onsuccess = (event) => {
+                    const cursor = event.target.result;
+                    if (cursor) {
+                        // Found a key matching the transferId, delete the corresponding record using its primary key
+                        store.delete(cursor.primaryKey);
+                        deleteCount++;
+                        cursor.continue(); // Move to the next matching key
+                    }
+                    // No 'else' needed here, transaction oncomplete handles the final resolve.
+                };
+                // Request specific error (less likely for cursor)
+                request.onerror = (event) => {
+                    // Always log DB errors.
+                    console.error(`DB: Cursor error deleting chunks for ${transferId}:`, event.target.error);
+                    // Don't reject here, let the transaction error handler do it.
+                };
+
+            } catch (error) {
+                 // Always log errors getting store/starting transaction.
+                 console.error("Error accessing IndexedDB store for deleting chunks:", error);
+                 reject(error);
+            }
+        });
+    }
+
+    // --- End IndexedDB ---
+
+    // --- Disconnect Cleanup ---
+    /**
+     * Cleans up any pending or active file transfers when the WebSocket disconnects
+     * or the page unloads.
+     */
+    async handleDisconnectionCleanup() {
+        // Log cleanup attempt only if DEBUG is enabled.
+        if (config.DEBUG) console.log("Performing disconnection cleanup for file transfers...");
+        if (this.sessions.size > 0) {
+            for (const [peerId, session] of this.sessions.entries()) {
+                if (session.transferStates && session.transferStates.size > 0) {
+                    const transferIds = Array.from(session.transferStates.keys());
+                    for (const transferId of transferIds) {
+                        const state = session.getTransferState(transferId);
+                        if (state) {
+                            // Log specific transfer cleanup only if DEBUG is enabled.
+                            if (config.DEBUG) console.log(`Cleaning up transfer ${transferId} (status: ${state.status}) during disconnect.`);
+                            // Update UI to show cancellation/error
+                            this.uiController.updateFileTransferStatus(transferId, "Cancelled (Disconnected)");
+                            this.uiController.hideFileTransferActions(transferId);
+                            // Clean up DB and session state
+                            await this.deleteChunksFromDB(transferId);
+                            session.removeTransferState(transferId);
+                            // Revoke any object URLs
+                            this.uiController.revokeObjectURL(transferId);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // --- End Disconnect Cleanup ---
+
+} // End SessionManager Class

@@ -5,7 +5,7 @@
  * This class is responsible for getting references to UI elements,
  * showing/hiding different sections of the application, updating text content,
  * enabling/disabling controls, adding/removing items from lists,
- * displaying messages, playing sounds, managing settings UI,
+ * displaying messages (including file transfers), playing sounds, managing settings UI,
  * and binding event listeners to UI elements.
  * It acts as the presentation layer, controlled by the SessionManager.
  */
@@ -37,7 +37,7 @@ class UIController {
         this.startChatButton = document.getElementById('start-chat-button'); // Button to initiate chat
         this.sidebarControls = document.getElementById('sidebar-controls'); // Container for sidebar buttons
         this.muteButton = document.getElementById('mute-button'); // Mute button reference
-        this.settingsButton = document.getElementById('settings-button'); // NEW: Settings button reference
+        this.settingsButton = document.getElementById('settings-button'); // Settings button reference
         this.sessionListContainer = document.getElementById('session-list-container'); // Container for session list
         this.sessionList = document.getElementById('session-list'); // The <ul> element for sessions
 
@@ -67,16 +67,19 @@ class UIController {
         this.typingIndicatorText = document.getElementById('typing-indicator-text'); // The text span for "is typing..."
 
         this.messageInputArea = document.getElementById('message-input-area'); // Container for input and send button
+        this.attachButton = document.getElementById('attach-button'); // NEW: Attach button reference
         this.messageInput = document.getElementById('message-input'); // The message text input field
         this.sendButton = document.getElementById('send-button'); // Send message button
         this.disconnectButton = document.getElementById('disconnect-button'); // Disconnect button in chat header
 
-        // NEW: Settings Pane Elements
+        // Settings Pane Elements
         this.settingsPane = document.getElementById('settings-pane');
         this.fontFamilySelect = document.getElementById('font-family-select');
         this.fontSizeInput = document.getElementById('font-size-input');
         this.closeSettingsButton = document.getElementById('close-settings-button');
-        // ---------------------------
+
+        // File Input Element (Hidden)
+        this.fileInput = document.getElementById('file-input'); // NEW: Hidden file input reference
 
         // --- Audio Management ---
         // Object to hold preloaded Audio elements.
@@ -89,7 +92,11 @@ class UIController {
             'error': 'audio/error.mp3',
             'registered': 'audio/registered.mp3',
             'receiverequest': 'audio/receiverequest.mp3',
-            'sendrequest': 'audio/sendrequest.mp3'
+            'sendrequest': 'audio/sendrequest.mp3',
+            // NEW: Add sounds for file transfer
+            'file_request': 'audio/receiverequest.mp3', // Reuse request sound
+            'file_complete': 'audio/begin.mp3',        // Reuse begin sound
+            'file_error': 'audio/error.mp3'            // Reuse error sound
         };
 
         // Preload each sound file.
@@ -111,6 +118,12 @@ class UIController {
         // Tracks whether notification sounds should be played.
         this.isMuted = false; // Start unmuted by default.
         // -----------------------
+
+        // --- Object URL Tracking ---
+        // Map to store generated Blob Object URLs for file downloads, keyed by transferId.
+        // Needed so they can be revoked later to free memory.
+        this.objectUrls = new Map();
+        // ---------------------------
 
         // --- Initial State ---
         // Set the initial visibility of UI sections.
@@ -301,7 +314,7 @@ class UIController {
         this.clearMessageInput(); // Clear any old text in input
         this.clearMessages(); // Clear messages from previous chat
         this.setActiveSessionInList(peerId); // Highlight session in sidebar list
-        this.setChatControlsEnabled(true); // Enable message input, send, disconnect
+        this.setChatControlsEnabled(true); // Enable message input, send, disconnect, attach
         // Disable other potentially active controls
         this.setIncomingRequestControlsEnabled(false);
         this.setInfoControlsEnabled(false);
@@ -333,7 +346,7 @@ class UIController {
         this.setWaitingControlsEnabled(false);
     }
 
-    // --- NEW: Settings Pane Management ---
+    // --- Settings Pane Management ---
     /**
      * Shows the settings pane with the overlay effect.
      * Populates the settings controls with current values.
@@ -376,7 +389,7 @@ class UIController {
             this.switchToSessionView(this.displayedPeerId);
         } else {
             // Otherwise, show the default welcome view
-            this.showDefaultRegisteredView(this.identifier);
+            this.showDefaultRegisteredView(this.identifier); // Assuming identifier is accessible or passed
         }
     }
     // -----------------------------------
@@ -463,13 +476,15 @@ class UIController {
         this._setButtonState(this.denyButton, enabled, loadingState, "Denying...");
     }
 
-    /** Enables/disables active chat controls (input, send, disconnect), optionally showing loading state. */
+    /** Enables/disables active chat controls (input, send, disconnect, attach), optionally showing loading state. */
     setChatControlsEnabled(enabled, loadingState = false) {
         // Log control state change only if DEBUG is enabled.
         if (config.DEBUG) console.log(`UI: Setting Chat Controls Enabled: ${enabled}, Loading: ${loadingState}`);
         if (this.messageInput) this.messageInput.disabled = !enabled || loadingState;
         this._setButtonState(this.sendButton, enabled, loadingState, "Sending...");
         this._setButtonState(this.disconnectButton, enabled, loadingState, "Disconnecting...");
+        // Also handle the attach button
+        if (this.attachButton) this.attachButton.disabled = !enabled || loadingState;
     }
 
     /** Enables/disables info pane controls (Close, Retry), optionally showing loading state. */
@@ -502,7 +517,7 @@ class UIController {
      */
     addSessionToList(peerId) {
         // Check if list exists and if item already exists
-        if (!this.sessionList || this.sessionList.querySelector(`[data-peerid="${peerId}"]`)) {
+        if (!this.sessionList || this.sessionList.querySelector(`li[data-peerid="${peerId}"]`)) {
             return;
         }
         // Log action only if DEBUG is enabled.
@@ -522,7 +537,7 @@ class UIController {
      * @param {string} peerId - The identifier of the peer whose list item should be removed.
      */
     removeSessionFromList(peerId) {
-        const listItem = this.sessionList ? this.sessionList.querySelector(`[data-peerid="${peerId}"]`) : null;
+        const listItem = this.sessionList ? this.sessionList.querySelector(`li[data-peerid="${peerId}"]`) : null;
         if (listItem) {
             // Log action only if DEBUG is enabled.
             if (config.DEBUG) console.log(`UI: Removing session ${peerId} from list.`);
@@ -543,7 +558,7 @@ class UIController {
         // Log action only if DEBUG is enabled.
         if (config.DEBUG) console.log(`UI: Setting active session in list: ${peerId}`);
         this.clearActiveSessionInList(); // Remove active class from others first
-        const listItem = this.sessionList.querySelector(`[data-peerid="${peerId}"]`);
+        const listItem = this.sessionList.querySelector(`li[data-peerid="${peerId}"]`);
         if (listItem) {
             listItem.classList.add('active-session'); // Add active class
             listItem.classList.remove('has-unread'); // Ensure unread indicator is off
@@ -566,7 +581,7 @@ class UIController {
      */
     setUnreadIndicator(peerId, hasUnread) {
         if (!this.sessionList) return;
-        const listItem = this.sessionList.querySelector(`[data-peerid="${peerId}"]`);
+        const listItem = this.sessionList.querySelector(`li[data-peerid="${peerId}"]`);
         if (listItem) {
             if (hasUnread) {
                 // Only add 'has-unread' if the item isn't already the active one
@@ -668,6 +683,214 @@ class UIController {
     /** Clears all messages from the message display area. */
     clearMessages() { if (this.messageArea) this.messageArea.innerHTML = ''; }
 
+    // --- NEW: File Transfer Message Display ---
+
+    /**
+     * Adds a file transfer status message block to the message area.
+     * @param {string} transferId - The unique ID for this transfer.
+     * @param {string} peerId - The ID of the peer involved in the transfer.
+     * @param {string} fileName - The name of the file.
+     * @param {number} fileSize - The size of the file in bytes.
+     * @param {boolean} isSender - True if the local user is sending, false if receiving.
+     */
+    addFileTransferMessage(transferId, peerId, fileName, fileSize, isSender) {
+        if (!this.messageArea) return;
+
+        const wasScrolledToBottom = this.messageArea.scrollHeight - this.messageArea.clientHeight <= this.messageArea.scrollTop + 1;
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'message-file-transfer';
+        messageDiv.dataset.transferId = transferId; // Store transfer ID
+
+        // Format file size nicely
+        const formattedSize = this.formatFileSize(fileSize);
+
+        // Create inner structure (using template literals for readability)
+        messageDiv.innerHTML = `
+            <span class="file-info">
+                <span class="file-name" title="${fileName}">${this.truncateFileName(fileName)}</span>
+                <span class="file-size">(${formattedSize})</span>
+            </span>
+            <span class="file-status">${isSender ? 'Waiting for acceptance...' : 'Incoming file request...'}</span>
+            <progress class="file-progress" max="100" value="0" style="display: none;"></progress>
+            <div class="file-actions">
+                ${isSender ?
+                    '<button class="file-cancel-btn">Cancel</button>' :
+                    '<button class="file-accept-btn">Accept</button><button class="file-reject-btn">Reject</button>'
+                }
+                <a class="file-download-link" style="display: none;">Download</a>
+            </div>
+        `;
+
+        this.messageArea.appendChild(messageDiv);
+
+        if (wasScrolledToBottom) {
+            this.messageArea.scrollTop = this.messageArea.scrollHeight;
+        }
+    }
+
+    /**
+     * Updates the status text of a specific file transfer message.
+     * @param {string} transferId - The ID of the transfer to update.
+     * @param {string} statusText - The new status text to display.
+     */
+    updateFileTransferStatus(transferId, statusText) {
+        const messageDiv = this.messageArea?.querySelector(`.message-file-transfer[data-transfer-id="${transferId}"]`);
+        const statusSpan = messageDiv?.querySelector('.file-status');
+        if (statusSpan) {
+            statusSpan.textContent = statusText;
+            // Log update only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`UI: Updated status for transfer ${transferId} to "${statusText}"`);
+        } else {
+            // Log failure only if DEBUG is enabled.
+            if (config.DEBUG) console.warn(`UI: Could not find status span for transfer ${transferId}`);
+        }
+    }
+
+    /**
+     * Updates the progress bar value for a specific file transfer message.
+     * Makes the progress bar visible if it wasn't already.
+     * @param {string} transferId - The ID of the transfer to update.
+     * @param {number} progressPercent - The progress percentage (0-100).
+     */
+    updateFileTransferProgress(transferId, progressPercent) {
+        const messageDiv = this.messageArea?.querySelector(`.message-file-transfer[data-transfer-id="${transferId}"]`);
+        const progressBar = messageDiv?.querySelector('.file-progress');
+        if (progressBar) {
+            progressBar.value = Math.min(100, Math.max(0, progressPercent)); // Clamp value 0-100
+            progressBar.style.display = 'block'; // Ensure progress bar is visible
+            // Log update only if DEBUG is enabled.
+            // if (config.DEBUG) console.log(`UI: Updated progress for transfer ${transferId} to ${progressPercent.toFixed(1)}%`);
+        } else {
+             // Log failure only if DEBUG is enabled.
+             if (config.DEBUG) console.warn(`UI: Could not find progress bar for transfer ${transferId}`);
+        }
+    }
+
+    /**
+     * Shows the download link for a completed file transfer.
+     * Creates an object URL, sets link attributes, hides other actions.
+     * @param {string} transferId - The ID of the completed transfer.
+     * @param {Blob} blob - The reassembled file Blob.
+     * @param {string} fileName - The original filename for the download attribute.
+     */
+    showFileDownloadLink(transferId, blob, fileName) {
+        const messageDiv = this.messageArea?.querySelector(`.message-file-transfer[data-transfer-id="${transferId}"]`);
+        const downloadLink = messageDiv?.querySelector('.file-download-link');
+        if (downloadLink && blob) {
+            try {
+                // Create an object URL for the Blob.
+                const objectUrl = URL.createObjectURL(blob);
+                // Store the URL for later revocation.
+                this.objectUrls.set(transferId, objectUrl);
+                // Log creation only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`UI: Created object URL for transfer ${transferId}: ${objectUrl}`);
+
+                downloadLink.href = objectUrl;
+                downloadLink.download = fileName; // Set the filename for download
+                downloadLink.style.display = 'inline-block'; // Make the link visible
+
+                // Hide other action buttons (Accept/Reject/Cancel).
+                this.hideFileTransferActions(transferId, false); // Hide actions, keep download link
+
+            } catch (error) {
+                // Always log errors related to object URL creation.
+                console.error(`UI: Error creating object URL for transfer ${transferId}:`, error);
+                this.updateFileTransferStatus(transferId, "Error preparing download link.");
+            }
+        } else {
+             // Log failure only if DEBUG is enabled.
+             if (config.DEBUG) console.warn(`UI: Could not find download link or blob invalid for transfer ${transferId}`);
+        }
+    }
+
+    /**
+     * Hides the action buttons (Accept, Reject, Cancel) within a file transfer message.
+     * Optionally keeps the download link visible if specified.
+     * @param {string} transferId - The ID of the transfer whose actions to hide.
+     * @param {boolean} [hideDownloadLink=true] - Whether to also hide the download link.
+     */
+    hideFileTransferActions(transferId, hideDownloadLink = true) {
+        const messageDiv = this.messageArea?.querySelector(`.message-file-transfer[data-transfer-id="${transferId}"]`);
+        const actionsDiv = messageDiv?.querySelector('.file-actions');
+        if (actionsDiv) {
+            // Hide individual buttons instead of the whole container if download link needs to stay
+            const acceptBtn = actionsDiv.querySelector('.file-accept-btn');
+            const rejectBtn = actionsDiv.querySelector('.file-reject-btn');
+            const cancelBtn = actionsDiv.querySelector('.file-cancel-btn');
+            if (acceptBtn) acceptBtn.style.display = 'none';
+            if (rejectBtn) rejectBtn.style.display = 'none';
+            if (cancelBtn) cancelBtn.style.display = 'none';
+
+            if (hideDownloadLink) {
+                const downloadLink = actionsDiv.querySelector('.file-download-link');
+                if (downloadLink) downloadLink.style.display = 'none';
+            }
+            // Log action only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`UI: Hid actions for transfer ${transferId}`);
+        } else {
+             // Log failure only if DEBUG is enabled.
+             if (config.DEBUG) console.warn(`UI: Could not find actions container for transfer ${transferId}`);
+        }
+    }
+
+    /**
+     * Removes an entire file transfer message block from the message area.
+     * Also revokes any associated object URL.
+     * @param {string} transferId - The ID of the transfer message to remove.
+     */
+    removeFileTransferMessage(transferId) {
+        const messageDiv = this.messageArea?.querySelector(`.message-file-transfer[data-transfer-id="${transferId}"]`);
+        if (messageDiv) {
+            messageDiv.remove();
+            this.revokeObjectURL(transferId); // Revoke URL when message is removed
+            // Log removal only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`UI: Removed file transfer message for ${transferId}`);
+        }
+    }
+
+    /**
+     * Revokes a previously created object URL to free up memory.
+     * @param {string} transferId - The ID of the transfer whose URL should be revoked.
+     */
+    revokeObjectURL(transferId) {
+        if (this.objectUrls.has(transferId)) {
+            const url = this.objectUrls.get(transferId);
+            URL.revokeObjectURL(url);
+            this.objectUrls.delete(transferId);
+            // Log revocation only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`UI: Revoked object URL for transfer ${transferId}: ${url}`);
+        }
+    }
+
+    /**
+     * Formats a file size in bytes into a human-readable string (KB, MB, GB).
+     * @param {number} bytes - The file size in bytes.
+     * @returns {string} The formatted file size string.
+     */
+    formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+    }
+
+    /**
+     * Truncates a filename if it's too long, adding ellipsis.
+     * @param {string} filename - The original filename.
+     * @param {number} [maxLength=30] - The maximum length before truncating.
+     * @returns {string} The original or truncated filename.
+     */
+    truncateFileName(filename, maxLength = 30) {
+        if (filename.length <= maxLength) {
+            return filename;
+        }
+        return filename.substring(0, maxLength - 3) + '...';
+    }
+
+    // --- End File Transfer Message Display ---
+
     // --- Typing Indicator Methods ---
 
     /**
@@ -765,7 +988,7 @@ class UIController {
     }
     // --------------------------------
 
-    // --- NEW: Chat Style Management ---
+    // --- Chat Style Management ---
     /**
      * Applies the initial chat styles based on the default values in the settings controls.
      */
@@ -971,7 +1194,79 @@ class UIController {
         }
     }
 
-    // --- NEW: Settings Bindings ---
+    // --- NEW: File Transfer Bindings ---
+
+    /**
+     * Binds a handler function to the attach button's click event.
+     * @param {function} handler - The function to call when the attach button is clicked.
+     */
+    bindAttachButton(handler) {
+        if (this.attachButton) {
+            this.attachButton.addEventListener('click', handler);
+        }
+    }
+
+    /**
+     * Binds a handler function to the hidden file input's 'change' event.
+     * @param {function(Event): void} handler - The function to call when a file is selected.
+     */
+    bindFileInputChange(handler) {
+        if (this.fileInput) {
+            this.fileInput.addEventListener('change', handler);
+        }
+    }
+
+    /**
+     * Programmatically clicks the hidden file input element.
+     */
+    triggerFileInputClick() {
+        if (this.fileInput) {
+            // Log action only if DEBUG is enabled.
+            if (config.DEBUG) console.log("UI: Triggering file input click.");
+            this.fileInput.click();
+        }
+    }
+
+    /**
+     * Helper function to bind handlers for dynamically added file transfer buttons.
+     * Uses event delegation on the message area.
+     * @param {string} buttonClass - The CSS class of the button to target (e.g., '.file-accept-btn').
+     * @param {function(string): void} handler - The function to call, passing the transferId.
+     */
+    _bindDynamicFileButton(buttonClass, handler) {
+        if (!this.messageArea) return;
+        this.messageArea.addEventListener('click', (event) => {
+            const button = event.target.closest(buttonClass);
+            if (button) {
+                const messageDiv = button.closest('.message-file-transfer');
+                const transferId = messageDiv?.dataset?.transferId;
+                if (transferId) {
+                    // Log dynamic button click only if DEBUG is enabled.
+                    if (config.DEBUG) console.log(`UI: Dynamic button ${buttonClass} clicked for transfer ${transferId}`);
+                    handler(transferId);
+                } else {
+                    // Always log this error.
+                    console.error(`UI: Clicked ${buttonClass} but could not find transferId on parent.`);
+                }
+            }
+        });
+    }
+
+    /** Binds a handler for the dynamic Accept file button. */
+    bindFileAccept(handler) { this._bindDynamicFileButton('.file-accept-btn', handler); }
+    /** Binds a handler for the dynamic Reject file button. */
+    bindFileReject(handler) { this._bindDynamicFileButton('.file-reject-btn', handler); }
+    /** Binds a handler for the dynamic Cancel file button. */
+    bindFileCancel(handler) { this._bindDynamicFileButton('.file-cancel-btn', handler); }
+    /** Binds a handler for the dynamic Download file link/button. */
+    bindFileDownload(handler) {
+        // Note: We bind to the link itself, but the handler might just log or revoke the URL.
+        // The actual download is handled by the browser via the href/download attributes.
+        this._bindDynamicFileButton('.file-download-link', handler);
+    }
+    // ------------------------------------
+
+    // --- Settings Bindings ---
     /**
      * Binds a handler function to the settings button's click event.
      * @param {function} handler - The function to call when the settings button is clicked.
@@ -1027,7 +1322,7 @@ class UIController {
             this.statusElement, this.registrationArea, this.identifierInput, this.registerButton,
             this.appContainer, this.sidebar, this.myIdentifierDisplay, this.initiationArea,
             this.peerIdInput, this.startChatButton,
-            this.sidebarControls, this.muteButton, this.settingsButton, // Added settings button
+            this.sidebarControls, this.muteButton, this.settingsButton,
             this.sessionListContainer, this.sessionList,
             this.mainContent, this.overlay,
             this.welcomeMessage, this.myIdentifierWelcome,
@@ -1038,10 +1333,14 @@ class UIController {
             this.activeChatArea, this.chatHeader,
             this.peerIdentifierDisplay, this.messageArea,
             this.typingIndicatorArea, this.typingIndicatorText,
-            this.messageInputArea, this.messageInput,
+            this.messageInputArea,
+            this.attachButton, // Added attach button
+            this.messageInput,
             this.sendButton, this.disconnectButton,
             // Settings Pane Elements
-            this.settingsPane, this.fontFamilySelect, this.fontSizeInput, this.closeSettingsButton
+            this.settingsPane, this.fontFamilySelect, this.fontSizeInput, this.closeSettingsButton,
+            // File Input
+            this.fileInput // Added file input
         ];
         let allFound = true;
         // Validate DOM elements

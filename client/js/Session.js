@@ -5,7 +5,7 @@
  * Manages the state of the session (e.g., initiating, active, denied),
  * holds cryptographic keys relevant to this session (via its own CryptoModule instance
  * implementing ECDH for PFS), stores message history, handles timeouts,
- * and processes incoming messages for this peer.
+ * processes incoming messages for this peer, and manages file transfer states.
  */
 class Session {
     /**
@@ -44,12 +44,22 @@ class Session {
         this.typingIndicatorTimeoutId = null;
         // ---------------------------------
 
+        // --- NEW: File Transfer State ---
+        // Map storing the state of active file transfers for this session, keyed by transferId.
+        // Example state: { file: File, status: string, progress: number, fileName: string, fileSize: number, fileType: string, isSender: boolean, senderId?: string }
+        this.transferStates = new Map();
+        // --------------------------------
+
         // --- Payload Size Limits (for incoming Base64 strings) ---
         // Define maximum acceptable lengths for various Base64 encoded fields received from the network.
         // These are safety limits to prevent client-side DoS or excessive memory use from malicious payloads.
         this.MAX_PUBLIC_KEY_LENGTH = 512; // Generous limit for Base64 SPKI P-256 key (~120 bytes raw -> ~160 Base64)
         this.MAX_IV_LENGTH = 32;          // Generous limit for Base64 IV (12 bytes raw -> 16 Base64)
         this.MAX_ENCRYPTED_DATA_LENGTH = 1024 * 128; // Limit for Base64 encrypted data (challenge, response, message) - 128KB Base64 (~96KB raw)
+        // NEW: Limit for file transfer metadata (adjust as needed)
+        this.MAX_FILENAME_LENGTH = 255;
+        this.MAX_FILETYPE_LENGTH = 100;
+        // Note: Chunk data size is implicitly limited by WebSocket message size limit on server and client.
         // ---------------------------------------------------------
 
         // Log session creation (not wrapped in DEBUG as it's fundamental)
@@ -78,7 +88,8 @@ class Session {
 
 
     /**
-     * Resets the session state, clearing keys, challenges, messages, and timeouts.
+     * Resets the session state, clearing keys, challenges, messages, timeouts,
+     * and file transfer states.
      * Called when a session ends, is denied, times out, or encounters a critical error.
      */
     resetState() {
@@ -103,6 +114,11 @@ class Session {
          this.cryptoModule.wipeKeys(); // Tell the dedicated crypto module to wipe its ECDH keys and derived key.
          this.messages = []; // Clear message history.
          this.peerIsTyping = false; // Reset peer typing status.
+
+         // --- NEW: Clear File Transfer States ---
+         // Note: Actual cleanup (DB, Object URLs) is handled by SessionManager calling resetSession
+         this.transferStates.clear();
+         // ---------------------------------------
     }
 
     /**
@@ -136,6 +152,41 @@ class Session {
         this.messages.push({ sender, text, type });
         // No console log here by default, UIController handles display.
     }
+
+    // --- NEW: File Transfer State Management ---
+
+    /**
+     * Adds or updates the state data for a specific file transfer.
+     * @param {string} transferId - The unique ID of the transfer.
+     * @param {object} stateData - An object containing the state properties to store/update.
+     */
+    addTransferState(transferId, stateData) {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${this.peerId}] Adding/Updating transfer state for ${transferId}:`, stateData);
+        // Merge with existing state if it exists, otherwise just set
+        const existingState = this.transferStates.get(transferId) || {};
+        this.transferStates.set(transferId, { ...existingState, ...stateData });
+    }
+
+    /**
+     * Retrieves the state data for a specific file transfer.
+     * @param {string} transferId - The unique ID of the transfer.
+     * @returns {object | undefined} The state object, or undefined if not found.
+     */
+    getTransferState(transferId) {
+        return this.transferStates.get(transferId);
+    }
+
+    /**
+     * Removes the state data for a specific file transfer.
+     * @param {string} transferId - The unique ID of the transfer.
+     */
+    removeTransferState(transferId) {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${this.peerId}] Removing transfer state for ${transferId}`);
+        this.transferStates.delete(transferId);
+    }
+    // -----------------------------------------
 
     // --- Key Derivation Helper ---
     /**
@@ -211,6 +262,7 @@ class Session {
      * Processes an incoming message payload relevant to this specific session.
      * Routes the message to the appropriate internal handler based on its type.
      * Handles the ECDH key exchange and derivation logic.
+     * NOTE: File transfer messages (12-17) are handled by SessionManager directly.
      * @param {number} type - The message type identifier (e.g., 2 for ACCEPT, 8 for MESSAGE).
      * @param {object} payload - The message payload object.
      * @param {SessionManager} manager - The SessionManager instance (provides access to states, etc.).
@@ -240,6 +292,17 @@ class Session {
                 // Typing Indicators
                 case 10: return this._handleTypingStart(payload, manager); // Peer started typing
                 case 11: return this._handleTypingStop(payload, manager);  // Peer stopped typing
+
+                // File transfer messages (12-17) are handled by SessionManager.processFileTransferMessage
+                case 12:
+                case 13:
+                case 14:
+                case 15:
+                case 16:
+                case 17:
+                    // Always log this warning.
+                    console.warn(`Session [${this.peerId}] Received file transfer message type ${type} in Session.processMessage. Should be handled by SessionManager.`);
+                    return { action: 'NONE' };
 
                 default:
                     // Always log unhandled message types as a warning.

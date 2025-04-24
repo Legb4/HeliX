@@ -42,6 +42,10 @@
                 <button id="start-chat-button">Start Chat</button> <!-- Button to initiate the chat -->
             </div>
 
+            <!-- NEW: Separator Line -->
+            <hr>
+            <!-- End Separator Line -->
+
             <!-- Sidebar Controls Area (for Mute/Settings Buttons) -->
             <!-- This div holds controls like the mute button, placed below initiation and above session list. -->
             <div id="sidebar-controls">
@@ -57,7 +61,7 @@
 
             <!-- Container for the list of active and pending chat sessions -->
             <div id="session-list-container">
-                <h2>Sessions</h2> <!-- Heading for the session list -->
+                <h2>Chat Sessions</h2> <!-- Heading for the session list -->
                 <ul id="session-list">
                     <!-- Session list items (<li>) will be added here dynamically by JavaScript -->
                     <!-- Each item will typically contain the peer's ID and potentially a notification dot -->
@@ -122,11 +126,27 @@
                 <!-- Header for the active chat, showing peer ID and disconnect button -->
                 <div id="chat-header">
                     <span>Chatting with: <strong id="peer-identifier"></strong></span> <!-- Displays the peer's ID -->
-                    <button id="disconnect-button">Disconnect</button> <!-- Button to end the current chat session -->
+                    <button id="disconnect-button">End Session</button> <!-- Button to end the current chat session -->
                 </div>
                 <!-- Area where chat messages are displayed -->
+                <!-- Regular messages and file transfer status messages will be added here dynamically by JavaScript -->
                 <div id="message-area">
                     <!-- Messages (divs) will be added here dynamically by JavaScript -->
+                    <!-- Example structure for file transfer (added by JS, not hardcoded here):
+                    <div class="message-file-transfer" data-transfer-id="UNIQUE_ID">
+                        <span class="file-info">
+                            <span class="file-name">example.zip</span> (<span class="file-size">1.2 MB</span>)
+                        </span>
+                        <span class="file-status">Waiting for acceptance...</span>
+                        <progress class="file-progress" max="100" value="0" style="display: none;"></progress>
+                        <div class="file-actions">
+                            <button class="file-accept-btn" style="display: none;">Accept</button>
+                            <button class="file-reject-btn" style="display: none;">Reject</button>
+                            <button class="file-cancel-btn">Cancel</button>
+                            <a class="file-download-link" style="display: none;">Download</a>
+                        </div>
+                    </div>
+                    -->
                 </div>
                 <!-- Typing Indicator Area -->
                 <!-- This div holds the text indicating if the peer is currently typing. -->
@@ -135,6 +155,9 @@
                 </div>
                 <!-- Area containing the message input field and send button -->
                 <div id="message-input-area">
+                    <!-- NEW: Attach File Button -->
+                    <button id="attach-button" title="Attach File">📎</button>
+                    <!-- End Attach File Button -->
                     <input type="text" id="message-input" placeholder="Type your message..."> <!-- Input field for typing messages -->
                     <button id="send-button">Send</button> <!-- Button to send the typed message -->
                 </div>
@@ -176,6 +199,10 @@
     <!-- Displays the current connection status or other relevant information. -->
     <div id="status" class="status-bar">Status: Initializing...</div>
 
+    <!-- NEW: Hidden File Input -->
+    <!-- This input is triggered programmatically by the attach button -->
+    <input type="file" id="file-input" style="display: none;">
+    <!-- End Hidden File Input -->
 
     <!-- Load JavaScript Files -->
     <!-- Scripts are loaded at the end of the body to ensure the DOM is parsed before they run. -->

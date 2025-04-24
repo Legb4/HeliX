@@ -1,8 +1,8 @@
 # server/server.py
 # This file contains the core logic for the HeliX WebSocket server,
 # including client registration, message relaying, connection handling, SSL setup,
-# rate limiting, message validation (updated for PFS payloads), identifier sanitization,
-# and active session tracking for disconnect notifications.
+# rate limiting, message validation (updated for PFS payloads and File Transfer),
+# identifier sanitization, and active session tracking for disconnect notifications.
 
 import asyncio          # For asynchronous operations (coroutines, event loop).
 import websockets       # The WebSocket library used for server and client handling.
@@ -293,97 +293,102 @@ async def connection_handler(websocket):
                 sender_id = CONNECTIONS.get(websocket) # Get sender ID if registered
                 target_id = payload.get("targetId") if isinstance(payload, dict) else None
 
+                # --- Helper for common string validation ---
+                def is_valid_string(value, max_len=50):
+                    return isinstance(value, str) and 0 < len(value.strip()) <= max_len
+
+                # --- Helper for common Base64-like string validation (basic check) ---
+                def is_valid_base64_like(value, max_len=1024*128): # Default max length from Session.js
+                    # Basic check: is string, not empty, within length limit, contains only valid chars
+                    # This is NOT a full Base64 validation but catches many obvious errors.
+                    return isinstance(value, str) and 0 < len(value) <= max_len and re.match(r"^[A-Za-z0-9+/=]+$", value)
+
+                # --- Message Type Specific Validation ---
                 if message_type == 0: # Registration
                     identifier = payload.get("identifier")
-                    # Check type and existence first
-                    if not identifier or not isinstance(identifier, str):
-                         # Always log validation warnings.
-                         logging.warning(f"Invalid identifier type in Type 0 payload from {websocket.remote_address}. Ignoring: {payload}")
-                         validation_passed = False
-                         # Send error back immediately if basic type is wrong
-                         await send_json(websocket, 0.2, {"identifier": identifier, "error": "Identifier must be a non-empty string."})
-                    # Then check format using regex
-                    elif not VALID_IDENTIFIER_REGEX.match(identifier):
-                        # Always log validation warnings.
-                        logging.warning(f"Invalid identifier format in Type 0 payload from {websocket.remote_address}. Sending error back.")
-                        # Send Type 0.2 error immediately upon detecting invalid format
-                        error_msg = "Invalid identifier format. Must be 3-30 characters, start with a letter/number, and contain only letters, numbers, underscores, or hyphens."
-                        await send_json(websocket, 0.2, {"identifier": identifier, "error": error_msg})
-                        validation_passed = False # Ensure we still skip further processing
+                    if not is_valid_string(identifier, 30) or not VALID_IDENTIFIER_REGEX.match(identifier):
+                        logging.warning(f"Invalid identifier format/type in Type 0 payload from {websocket.remote_address}. Ignoring: {payload}")
+                        # Error is sent back by handle_registration if format is invalid
+                        validation_passed = False
+                        # Send error back immediately if basic type/length is wrong before regex check
+                        if not isinstance(identifier, str) or len(identifier) == 0 or len(identifier) > 30:
+                             await send_json(websocket, 0.2, {"identifier": identifier, "error": "Identifier must be a non-empty string (max 30 chars)."})
 
-                # --- PFS Payload Validation ---
-                elif message_type in [1, 3, 7, 9, 10, 11]: # Types with simple target/sender payload
-                    if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
-                        # Always log validation warnings.
+                elif message_type in [1, 3, 7, 9, 10, 11]: # Simple target/sender types
+                    if not is_valid_string(target_id):
                         logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
                         validation_passed = False
-                    elif sender_id: # Check sender consistency only if registered
-                        payload_sender_id = payload.get("senderId")
-                        if not payload_sender_id or payload_sender_id != sender_id:
-                             # Always log validation warnings.
-                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
-                             validation_passed = False
-                elif message_type in [2, 4]: # Types carrying a public key
-                    if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
-                        # Always log validation warnings.
-                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
+                    elif sender_id and payload.get("senderId") != sender_id:
+                        logging.warning(f"Mismatched 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
                         validation_passed = False
-                    elif not payload.get("publicKey") or not isinstance(payload.get("publicKey"), str):
-                        # Always log validation warnings.
-                        logging.warning(f"Missing or invalid 'publicKey' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
+
+                elif message_type in [2, 4]: # Public Key types
+                    if not is_valid_string(target_id): validation_passed = False
+                    elif not is_valid_base64_like(payload.get("publicKey"), 512): # Check publicKey (SPKI format is relatively short)
+                        logging.warning(f"Invalid 'publicKey' in Type {message_type} payload from {websocket.remote_address}. Ignoring.")
                         validation_passed = False
-                    elif sender_id: # Check sender consistency only if registered
-                        payload_sender_id = payload.get("senderId")
-                        if not payload_sender_id or payload_sender_id != sender_id:
-                             # Always log validation warnings.
-                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
-                             validation_passed = False
+                    elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
+
                 elif message_type == 5: # Challenge
-                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
-                        # Always log validation warnings.
-                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
-                        validation_passed = False
-                     elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'encryptedChallenge']):
-                        # Always log validation warnings.
-                        logging.warning(f"Missing or invalid fields in Type 5 payload from {websocket.remote_address}. Ignoring: {payload}")
-                        validation_passed = False
-                     elif sender_id: # Check sender consistency only if registered
-                        payload_sender_id = payload.get("senderId")
-                        if not payload_sender_id or payload_sender_id != sender_id:
-                             # Always log validation warnings.
-                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
-                             validation_passed = False
+                    if not is_valid_string(target_id): validation_passed = False
+                    elif not is_valid_base64_like(payload.get("iv"), 32): validation_passed = False # IV is short
+                    elif not is_valid_base64_like(payload.get("encryptedChallenge")): validation_passed = False
+                    elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
+                    if not validation_passed: logging.warning(f"Invalid Type 5 payload from {websocket.remote_address}. Ignoring.")
+
                 elif message_type == 6: # Challenge Response
-                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
-                        # Always log validation warnings.
-                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
-                        validation_passed = False
-                     elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'encryptedResponse']):
-                        # Always log validation warnings.
-                        logging.warning(f"Missing or invalid fields in Type 6 payload from {websocket.remote_address}. Ignoring: {payload}")
-                        validation_passed = False
-                     elif sender_id: # Check sender consistency only if registered
-                        payload_sender_id = payload.get("senderId")
-                        if not payload_sender_id or payload_sender_id != sender_id:
-                             # Always log validation warnings.
-                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
-                             validation_passed = False
+                    if not is_valid_string(target_id): validation_passed = False
+                    elif not is_valid_base64_like(payload.get("iv"), 32): validation_passed = False
+                    elif not is_valid_base64_like(payload.get("encryptedResponse")): validation_passed = False
+                    elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
+                    if not validation_passed: logging.warning(f"Invalid Type 6 payload from {websocket.remote_address}. Ignoring.")
+
                 elif message_type == 8: # Encrypted Message
-                     if not target_id or not isinstance(target_id, str) or len(target_id.strip()) == 0 or len(target_id) > 50:
-                        # Always log validation warnings.
-                        logging.warning(f"Invalid 'targetId' in Type {message_type} payload from {websocket.remote_address}. Ignoring: {payload}")
-                        validation_passed = False
-                     elif not all(k in payload and isinstance(payload[k], str) and payload[k] for k in ['iv', 'data']): # Check for 'data', not 'encryptedKey'
-                        # Always log validation warnings.
-                        logging.warning(f"Missing or invalid fields in Type 8 payload from {websocket.remote_address}. Ignoring: {payload}")
-                        validation_passed = False
-                     elif sender_id: # Check sender consistency only if registered
-                        payload_sender_id = payload.get("senderId")
-                        if not payload_sender_id or payload_sender_id != sender_id:
-                             # Always log validation warnings.
-                             logging.warning(f"Mismatched or missing 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
-                             validation_passed = False
-                # --- End PFS Payload Validation ---
+                    if not is_valid_string(target_id): validation_passed = False
+                    elif not is_valid_base64_like(payload.get("iv"), 32): validation_passed = False
+                    elif not is_valid_base64_like(payload.get("data")): validation_passed = False # Check 'data' field
+                    elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
+                    if not validation_passed: logging.warning(f"Invalid Type 8 payload from {websocket.remote_address}. Ignoring.")
+
+                # --- NEW: File Transfer Validation ---
+                elif message_type == 12: # FILE_TRANSFER_REQUEST
+                    if not is_valid_string(target_id): validation_passed = False
+                    elif not is_valid_string(payload.get("transferId"), 64): validation_passed = False # UUID length + buffer
+                    elif not is_valid_string(payload.get("fileName"), 255): validation_passed = False # Max filename length
+                    elif not isinstance(payload.get("fileSize"), int) or payload.get("fileSize") < 0: validation_passed = False # Must be non-negative integer
+                    # Optional: Check against server-side max file size from config
+                    # elif hasattr(config, 'MAX_FILE_SIZE_BYTES') and payload.get("fileSize") > config.MAX_FILE_SIZE_BYTES:
+                    #     logging.warning(f"File size {payload.get('fileSize')} exceeds server limit. Rejecting Type 12 from {sender_id}.")
+                    #     await send_json(websocket, 17, {"transferId": payload.get("transferId"), "error": "File exceeds maximum allowed size."})
+                    #     validation_passed = False # Prevent relaying
+                    elif not is_valid_string(payload.get("fileType"), 100): validation_passed = False # MIME type length
+                    elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
+                    if not validation_passed: logging.warning(f"Invalid Type 12 payload from {websocket.remote_address}. Ignoring.")
+
+                elif message_type in [13, 14, 16]: # FILE_TRANSFER_ACCEPT / REJECT / COMPLETE
+                    if not is_valid_string(target_id): validation_passed = False
+                    elif not is_valid_string(payload.get("transferId"), 64): validation_passed = False
+                    elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
+                    if not validation_passed: logging.warning(f"Invalid Type {message_type} payload from {websocket.remote_address}. Ignoring.")
+
+                elif message_type == 15: # FILE_CHUNK
+                    if not is_valid_string(target_id): validation_passed = False
+                    elif not is_valid_string(payload.get("transferId"), 64): validation_passed = False
+                    elif not isinstance(payload.get("chunkIndex"), int) or payload.get("chunkIndex") < 0: validation_passed = False
+                    elif not is_valid_base64_like(payload.get("iv"), 32): validation_passed = False
+                    # Data length check relies on WebSocket max_size setting
+                    elif not is_valid_base64_like(payload.get("data")): validation_passed = False
+                    elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
+                    if not validation_passed: logging.warning(f"Invalid Type 15 payload from {websocket.remote_address}. Ignoring.")
+
+                elif message_type == 17: # FILE_TRANSFER_ERROR
+                    if not is_valid_string(target_id): validation_passed = False
+                    elif not is_valid_string(payload.get("transferId"), 64): validation_passed = False
+                    # Error message is optional but should be string if present
+                    elif "error" in payload and not isinstance(payload.get("error"), str): validation_passed = False
+                    elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
+                    if not validation_passed: logging.warning(f"Invalid Type 17 payload from {websocket.remote_address}. Ignoring.")
+                # --- End File Transfer Validation ---
 
                 if not validation_passed:
                     continue # Skip processing this invalid message
@@ -397,7 +402,9 @@ async def connection_handler(websocket):
                     # Target ID already extracted and validated above.
                     # Log relay attempt only if DEBUG is enabled.
                     if config.DEBUG:
-                        logging.info(f"Attempting to relay message type {message_type} from '{sender_id}' to '{target_id}'")
+                        # Avoid logging full chunk data in debug mode for performance/readability
+                        log_payload = payload if message_type != 15 else {**payload, "data": f"<Chunk {payload.get('chunkIndex', '?')} Data Omitted>"}
+                        logging.info(f"Attempting to relay message type {message_type} from '{sender_id}' to '{target_id}': {log_payload}")
                     # Look up the target client's WebSocket connection using their ID.
                     target_websocket = CLIENTS.get(target_id)
 
@@ -536,7 +543,9 @@ async def start_server(host, port):
 
     # Define the maximum message size (e.g., 1MB = 1024 * 1024 bytes)
     # This value could potentially be moved to config.py if desired
-    MAX_MESSAGE_SIZE = 1024 * 1024
+    # Increase max size slightly to accommodate chunk overhead (IV, index, etc.) + chunk size
+    # Example: 256KB chunk + ~1KB overhead -> ~257KB. Let's set to 300KB for buffer.
+    MAX_MESSAGE_SIZE = 300 * 1024 # Adjust as needed based on CHUNK_SIZE + overhead
     logging.info(f"Maximum WebSocket message size: {MAX_MESSAGE_SIZE} bytes") # Log the max size being used
     # Log debug status
     logging.info(f"Server Debug Logging: {'ENABLED' if config.DEBUG else 'DISABLED'}")

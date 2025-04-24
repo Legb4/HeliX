@@ -49,6 +49,14 @@ MAX_MESSAGES_PER_CONNECTION = 20
 # Time window in seconds for message rate limiting.
 MESSAGE_WINDOW_SECONDS = 5
 
+# --- File Transfer Configuration ---
+
+# Maximum file size allowed for transfer, in bytes.
+# This provides an optional server-side check for Type 12 messages.
+# Client-side validation (MAX_FILE_SIZE in SessionManager.js) is still essential.
+# Example: 100 MB = 100 * 1024 * 1024
+MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024
+
 # --- Debugging Configuration ---
 
 # Debug Flag for Console Logging.

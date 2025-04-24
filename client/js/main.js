@@ -207,7 +207,7 @@ document.addEventListener('DOMContentLoaded', () => {
         uiController.toggleMuteState(); // Call the UIController method directly
     });
 
-    // --- NEW: Bind Settings UI Elements ---
+    // --- Bind Settings UI Elements ---
     // Bind Settings Button: Show the settings pane.
     uiController.bindSettingsButton(() => {
         // Log settings open only if DEBUG is enabled.
@@ -241,6 +241,51 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // ------------------------------------
 
+    // --- NEW: Bind File Transfer UI Elements ---
+    // Bind Attach Button click to trigger the hidden file input.
+    uiController.bindAttachButton(() => {
+        // Log attach click only if DEBUG is enabled.
+        if (config.DEBUG) console.log("Attach button clicked, triggering file input.");
+        uiController.triggerFileInputClick();
+    });
+
+    // Bind File Input change event to the SessionManager handler.
+    uiController.bindFileInputChange((event) => {
+        // Log file selection only if DEBUG is enabled.
+        if (config.DEBUG) console.log("File input changed, calling SessionManager handler.");
+        sessionManager.handleFileSelection(event);
+    });
+
+    // Bind dynamic buttons within file transfer messages using UIController's delegation methods.
+    uiController.bindFileAccept((transferId) => {
+        // Log accept click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`File Accept clicked for transfer: ${transferId}`);
+        sessionManager.handleAcceptFile(transferId);
+    });
+
+    uiController.bindFileReject((transferId) => {
+        // Log reject click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`File Reject clicked for transfer: ${transferId}`);
+        sessionManager.handleRejectFile(transferId);
+    });
+
+    uiController.bindFileCancel((transferId) => {
+        // Log cancel click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`File Cancel clicked for transfer: ${transferId}`);
+        sessionManager.handleCancelTransfer(transferId);
+    });
+
+    uiController.bindFileDownload((transferId) => {
+        // Log download click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`File Download clicked for transfer: ${transferId}. Revoking URL.`);
+        // The actual download is handled by the browser. We just need to revoke the URL after the click.
+        // Use a small timeout to allow the browser to initiate the download before revoking.
+        setTimeout(() => {
+            uiController.revokeObjectURL(transferId);
+        }, 100); // 100ms delay
+    });
+    // -----------------------------------------
+
 
     // --- 4. Add Page Unload / Hide Event Listeners for Cleanup ---
     // Attempt to gracefully notify peers and close the WebSocket when the user navigates away or closes the tab/browser.
@@ -253,6 +298,8 @@ document.addEventListener('DOMContentLoaded', () => {
         // This is a best-effort attempt.
         if (sessionManager) {
             sessionManager.notifyPeersOfDisconnect();
+            // NEW: Also attempt to clean up any pending file transfers (cancel/error)
+            sessionManager.handleDisconnectionCleanup(); // Add a method for this in SessionManager
         }
         // Attempt a synchronous close of the WebSocket if it's open.
         // This helps signal the server immediately, though it might not always complete.

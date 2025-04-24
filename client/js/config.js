@@ -22,7 +22,7 @@ const config = {
      *   and keep the console cleaner. Essential errors (`console.error`, `console.warn`)
      *   will still be logged regardless of this flag.
      */
-    DEBUG: false,     // Default to false for production
+    DEBUG: false,    // Default to false for production
 };
 
 // Make the config object globally accessible (if not using modules)
