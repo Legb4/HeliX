@@ -27,6 +27,7 @@ HeliX is a browser-based, end-to-end encrypted (E2EE), ephemeral chat system. It
 *   **Serverless Message Storage:** The Python server only relays data; it does not store message content.
 *   **Simple Identifier System:** Users register with a temporary, unique ID for the duration of their connection to the server. IDs must be shared out-of-band.
 *   **Self-Hosted:** You run the server components yourself, giving you control over the relay infrastructure.
+*   **Customizable Chat Appearance:** Allows users to adjust chat font family and size via a settings menu.
 *   **Basic & Focused:** Designed for simple, secure, temporary peer-to-peer conversations.
 
 **Target Use Case:**
@@ -44,12 +45,12 @@ HeliX is currently experimental software. While it implements strong E2EE princi
 **High-Level Architecture:**
 
 1.  **Client:** Runs entirely in the user's web browser using HTML, CSS, and JavaScript. It handles:
-    *   User Interface (UI) interactions.
+    *   User Interface (UI) interactions, including settings and notifications.
     *   Generating ephemeral cryptographic keys (ECDH and AES) via the browser's Web Crypto API.
     *   Performing key agreement (ECDH) and key derivation (HKDF).
     *   Encrypting and decrypting messages using the derived session key.
     *   Communicating with the WSS server via Secure WebSockets.
-2.  **HTTPS Server:** A simple Python server (integrated into `helix_manager.py`) serves the static client files (HTML, CSS, JS) to the browser over HTTPS. This is **required** for the Web Crypto API to function securely.
+2.  **HTTPS Server:** A simple Python server (integrated into `helix_manager.py`) serves the static client files (HTML, CSS, JS, audio) to the browser over HTTPS. This is **required** for the Web Crypto API to function securely.
 3.  **WSS Server:** A Python server using the `websockets` library. It acts as a signaling and relay server:
     *   Manages user registrations (mapping temporary IDs to connections).
     *   Relays handshake messages (public keys, challenges) between clients.
@@ -116,6 +117,7 @@ Before setting up HeliX, ensure you have the following:
 *   **`mkcert` Utility:** A tool for creating locally-trusted development certificates.
     *   Download from the [mkcert GitHub Releases page](https://github.com/FiloSottile/mkcert/releases).
     *   Follow the specific setup instructions in the "Installation & Setup" section below *before* running the HeliX manager's certificate option.
+*   **Modern Web Browser:** Firefox, Chrome, Edge, or Safari recommended (supporting Web Crypto API and WebSockets).
 
 ---
 
@@ -142,6 +144,14 @@ Before setting up HeliX, ensure you have the following:
     ├── client/                # Contains all client-side browser code
     │   ├── index.html         # Main HTML file for the client interface
     │   ├── favicon.ico        # Browser tab/bookmark icon
+    │   ├── audio/             # Directory for audio files
+    │   │   ├── begin.mp3
+    │   │   ├── end.mp3
+    │   │   ├── error.mp3
+    │   │   ├── notification.mp3
+    │   │   ├── registered.mp3
+    │   │   ├── receiverequest.mp3
+    │   │   └── sendrequest.mp3
     │   ├── css/
     │   │   └── style.css      # Stylesheet for the client interface
     │   └── js/
@@ -239,13 +249,20 @@ Before setting up HeliX, ensure you have the following:
 1.  **Access Client:** Open the correct `https://...` URL in your browser (see "Running HeliX").
 2.  **Registration:** Choose a unique temporary ID (3-30 chars, letters, numbers, -, \_) and click "Register".
 3.  **Main Interface:** Familiarize yourself with the Sidebar, Main Content area, and Status Bar.
-4.  **Share Your ID:** Securely communicate your registered ID to your peer out-of-band.
-5.  **Starting a Chat:** Enter peer's ID in the sidebar, click "Start Chat".
-6.  **Receiving a Chat Request:** Accept or Deny the prompt in the main content area or by clicking the session in the sidebar.
-7.  **Active Chatting:** Type messages in the chat view.
-8.  **Ending a Session:** Click "Disconnect" in the chat header. Your peer will be notified.
-9.  **Switching Between Sessions:** Click peer IDs in the sidebar.
-10. **Understanding Info Panes:** Read messages about errors, denials, or timeouts.
+4.  **Sidebar Controls:**
+    *   **Mute Button (🔊/🔇):** Click the speaker icon to toggle notification sounds on or off.
+    *   **Settings Button (⚙️):** Click the gear icon to open the settings pane.
+5.  **Settings Pane:**
+    *   **Font Family:** Select a different font for the chat message area from the dropdown.
+    *   **Font Size:** Enter or use the arrows to change the font size (in pixels) for the chat message area.
+    *   Click "Close" to save and exit the settings pane.
+6.  **Share Your ID:** Securely communicate your registered ID (shown in the sidebar) to your peer out-of-band.
+7.  **Starting a Chat:** Enter your peer's ID in the sidebar input field and click "Start Chat".
+8.  **Receiving a Chat Request:** If someone requests a chat with you, click "Accept" or "Deny".
+9.  **Active Chatting:** Once a session is established, type messages in the input field at the bottom of the chat view and press Enter or click "Send".
+10. **Ending a Session:** Click the "Disconnect" button in the chat header.
+11. **Switching Between Sessions:** Click peer IDs in the sidebar list to switch between active or pending sessions.
+12. **Understanding Info Panes:** Read messages about errors, denials, or timeouts that appear in the main content area.
 
 ---
 
@@ -264,11 +281,19 @@ Before setting up HeliX, ensure you have the following:
     *   Check OS firewall rules on server.
     *   If using LAN IP, ensure it's correct.
 *   **Cannot Connect from Outside LAN:** Verify firewall rules *and* router port forwarding. See "Installation & Setup" section 6.
-*   **Registration Failed ("Identifier already taken" or "Invalid identifier format"):** Choose a different temporary ID matching the required format (3-30 chars, letters, numbers, -, \_).
-*   **Chat Request Failed ("User '...' is unavailable."):** Verify peer's ID and ensure they are online and registered. The peer might have disconnected.
+*   **Registration Failed ("Identifier already taken" or "Invalid identifier format"):** Choose a different temporary ID matching the required format (3-30 chars, letters, numbers, -, \_). An error sound may play.
+*   **Chat Request Failed ("User '...' is unavailable."):** Verify peer's ID and ensure they are online and registered. The peer might have disconnected. An error sound may play.
 *   **Port Conflict ("Address already in use"):** Stop the other application or configure HeliX to use different ports via the manager menu (Options 1-4).
-*   **Handshake Timeout:** If the connection hangs during initiation, check console logs on both clients (enable Client Debug via manager option 6) and the server (enable Server Debug via manager option 5) for errors. Network latency or firewall issues could interfere.
-*   **Disconnected by Server (Rate Limit):** If you see an alert about being disconnected for exceeding the rate limit, you sent too many messages too quickly. Wait a moment and reconnect.
+*   **Handshake Timeout:** If the connection hangs during initiation, check console logs on both clients (enable Client Debug via manager option 6) and the server (enable Server Debug via manager option 5) for errors. Network latency or firewall issues could interfere. An error sound may play.
+*   **Disconnected by Server (Rate Limit):** If you see an alert about being disconnected for exceeding the rate limit, you sent too many messages too quickly. Wait a moment and reconnect. An error sound will play.
+*   **No Sound Playing:**
+    *   Check if sounds are muted using the mute button (🔇) in the sidebar.
+    *   Ensure your system/browser volume is not muted or too low.
+    *   Check the browser console (F12) for errors related to loading or playing audio files (e.g., file not found, format not supported, autoplay blocked). Autoplay might require user interaction with the page first in some browsers.
+    *   Verify the audio files exist in the `client/audio/` directory.
+*   **Chat Font/Size Not Changing:**
+    *   Ensure you are clicking the "Close" button in the settings pane after making changes (though changes should apply live).
+    *   Check the browser console (F12) for any JavaScript errors related to applying styles.
 
 ---
 
