@@ -1,7 +1,7 @@
 /* client/css/style.css */
 /* This file defines the visual appearance of the HeliX chat client interface. */
 
-/* --- Color Palette (Dark Theme) --- */
+/* --- Color Palette (Dark Theme - Refined) --- */
 /* Defines CSS custom properties (variables) for a consistent dark theme. */
 :root {
     /* Background Colors */
@@ -10,26 +10,26 @@
     --bg-main: #1e1e1e;                 /* Main content area background (same as body) */
     --bg-input: #3c3c3c;                /* Input field background */
     --bg-message-area: #252526;         /* Background for the message display area */
-    --bg-message-peer-subtle: rgba(204, 204, 204, 0.05); /* Subtle background for peer messages */
-    --bg-message-own-subtle: rgba(0, 122, 204, 0.08);   /* Subtle background for own messages */
+    --bg-message-peer-subtle: rgba(204, 204, 204, 0.05); /* Subtle background for peer messages (optional) */
+    --bg-message-own-subtle: rgba(0, 122, 204, 0.08);   /* Subtle background for own messages (optional) */
     --bg-message-system: rgba(218, 165, 32, 0.1); /* Background for system messages */
-    --bg-message-file: rgba(100, 100, 120, 0.1); /* Background for file transfer messages */
+    --bg-message-file: rgba(100, 100, 120, 0.1); /* NEW: Background for file transfer messages */
     --bg-button: #3f3f46;               /* Default button background */
     --bg-button-hover: #5a5a63;         /* Button background on hover */
     --bg-button-active: #4a4a53;        /* Button background when clicked */
     --bg-button-disabled: #444444;      /* Button background when disabled */
     --bg-button-danger: #8f3040;        /* Background for danger/destructive buttons (e.g., disconnect, reject, cancel) */
     --bg-button-danger-hover: #a84050;  /* Danger button background on hover */
-    --bg-button-success: #3f6844;       /* Background for success buttons (e.g., accept) */
-    --bg-button-success-hover: #4f8054; /* Success button background on hover */
+    --bg-button-success: #3f6844;       /* NEW: Background for success buttons (e.g., accept) */
+    --bg-button-success-hover: #4f8054; /* NEW: Success button background on hover */
     --bg-list-hover: #2a2d2e;           /* Background for session list items on hover */
     --bg-list-active: #094771;          /* Background for the active session list item */
     --bg-info: #333322;                 /* Background for informational areas (e.g., incoming request) */
     --bg-danger-info: #442a31;          /* Background for error/denial info areas */
     --bg-settings: #2d2d30;             /* Background for the settings pane */
     --bg-overlay: rgba(0, 0, 0, 0.6);   /* Background for the overlay */
-    --bg-emoji-panel: #2d2d30;          /* Background for emoji picker */
-    --bg-emoji-hover: #3f3f46;          /* Background for emoji on hover */
+    --bg-emoji-panel: #2d2d30;          /* NEW: Background for emoji picker */
+    --bg-emoji-hover: #3f3f46;          /* NEW: Background for emoji on hover */
 
     /* Text Colors */
     --text-light: #cccccc;              /* Primary light text color */
@@ -39,28 +39,28 @@
     --text-sender-peer: #ce9178;        /* Color for peer's sender name */
     --text-sender-own: #9cdcfe;         /* Color for own sender name */
     --text-sender-system: #dcdcaa;      /* Color for system message sender/prefix */
-    --text-action: #ffd54f;             /* Color for /me action messages */
+    --text-action: #ffd54f;             /* NEW: Color for /me action messages (using info color) */
     --text-error: #f48771;              /* Text color for error messages */
     --text-info: #ffd54f;               /* Text color for informational messages */
     --text-button-disabled: #888888;    /* Text color for disabled buttons */
     --text-typing: #a0a0a0;             /* Color for the 'is typing...' indicator text */
-    --text-file-info: #b0b0b0;          /* Color for file info text */
+    --text-file-info: #b0b0b0;          /* NEW: Color for file info text */
 
     /* Border Colors */
     --border-color: #333333;            /* Default border color */
     --border-color-input: #555555;      /* Border color for input fields */
     --border-color-danger: #a84050;     /* Border color for danger elements */
-    --border-color-success: #4f8054;    /* Border color for success elements */
+    --border-color-success: #4f8054;    /* NEW: Border color for success elements */
     --border-color-info: #666;          /* Border color for info elements */
     --border-color-settings: #444;      /* Border color for settings pane */
-    --border-color-file: #4a4a55;       /* Border color for file transfer messages */
-    --border-color-emoji-panel: #444;   /* Border color for emoji picker */
+    --border-color-file: #4a4a55;       /* NEW: Border color for file transfer messages */
+    --border-color-emoji-panel: #444;   /* NEW: Border color for emoji picker */
 
     /* Accent Colors */
     --accent-red: #f44336;              /* Red accent (e.g., notification dot) */
     --accent-blue: #007acc;             /* Blue accent (e.g., input focus, version text) */
     --accent-green: #4ec9b0;            /* Green accent (e.g., own ID highlight) */
-    --accent-progress: #0e639c;         /* Color for progress bar */
+    --accent-progress: #0e639c;         /* NEW: Color for progress bar */
 }
 
 /* Basic Reset & Body */
@@ -120,7 +120,7 @@ body {
 }
 /* Style for the label in the registration area. */
 #registration-area label {
-    margin-right: 5px; /* Space to the right */
+    margin-right: 5px; /* Space to the right (if needed) */
     color: var(--text-secondary); /* Secondary text color */
     margin-bottom: 10px; /* Space below the label */
     display: block; /* Ensure it takes its own line */
@@ -139,6 +139,7 @@ body {
 #app-container {
     display: none; /* Hidden by default, JS changes to 'flex' after registration */
     height: 100%; /* Fill the available height */
+    /* display: flex; */ /* This will be set by JS */
     overflow: hidden; /* Prevent content overflow from breaking layout */
 }
 
@@ -178,7 +179,7 @@ body {
 
 /* Area in the sidebar for initiating a new chat. */
 #initiation-area {
-    margin-bottom: 15px; /* Space below this section */
+    margin-bottom: 15px; /* Reduced space below this section */
 }
 /* Styles labels within the initiation area. */
 #initiation-area label {
@@ -200,25 +201,28 @@ body {
     width: 100%; /* Full width button */
 }
 
-/* Sidebar Separator Line Styling */
+/* --- Sidebar Separator Line Styling --- */
 #sidebar hr {
     border: 0; /* Remove default border */
     height: 1px; /* Set height for the line */
     background-color: var(--border-color); /* Use theme border color */
-    margin: 15px 0; /* Add vertical spacing */
+    margin: 15px 0; /* Add vertical spacing (adjust as needed) */
 }
+/* --- End Sidebar Separator Line Styling --- */
 
-/* Sidebar Controls Area Styling */
-/* Styles the container for sidebar controls like the mute and settings buttons. */
+
+/* --- Sidebar Controls Area Styling --- */
+/* Styles the container for sidebar controls like the mute button. */
 #sidebar-controls {
-    padding-bottom: 10px; /* Space below the buttons */
+    /* margin-bottom: 15px; REMOVED - Spacing handled by HR margin */
+    padding-bottom: 10px; /* Space below the button */
     border-bottom: 1px solid var(--border-color); /* Separator line below controls */
-    text-align: center; /* Center align the buttons */
+    text-align: center; /* <<< CHANGED: Align button(s) to the center */
 }
 
-/* Styles the mute and settings buttons. */
+/* Styles the mute button specifically. */
 #mute-button,
-#settings-button {
+#settings-button { /* Apply same base style to settings button */
     background: none; /* Transparent background */
     border: 1px solid transparent; /* Transparent border initially */
     color: var(--text-secondary); /* Use secondary text color for icon */
@@ -245,26 +249,30 @@ body {
     background-color: var(--bg-button-active); /* Darker background when clicked */
 }
 
-/* Styles the mute button when it has the 'muted' class (applied by JS). */
+/* Styles the mute button when it has the 'muted' class. */
 #mute-button.muted {
     opacity: 0.5; /* Make it semi-transparent */
 }
 
-/* Styles the span inside the mute/settings buttons (containing the icon). */
+/* Styles the span inside the mute/settings buttons (for the icon). */
 #mute-button span,
 #settings-button span {
     display: inline-block; /* Allow manipulation */
     vertical-align: middle; /* Align icon vertically */
 }
+/* --- End Sidebar Controls Area Styling --- */
+
 
 /* Container for the list of active/pending chat sessions. */
 #session-list-container {
-    padding-top: 10px; /* Space below the separator line */
+    /* margin-top: 15px; REMOVED - Space now handled by #sidebar-controls */
+    /* border-top: 1px solid var(--border-color); REMOVED - Separator now below controls */
+    padding-top: 10px; /* Space below the line */
     flex-grow: 1; /* Allow this container to grow and fill remaining sidebar space */
     min-height: 100px; /* Minimum height */
     overflow-y: auto; /* Allow scrolling if list is long */
 }
-/* Styles the "Chat Sessions" heading. */
+/* Styles the "Sessions" heading. */
 #session-list-container h2 {
     margin-top: 0; /* Remove default top margin */
     margin-bottom: 10px; /* Space below heading */
@@ -353,7 +361,7 @@ body {
     position: relative; /* Needed for absolute positioning of overlay */
 }
 
-/* Overlay Styling */
+/* --- Overlay Styling --- */
 /* Styles the overlay div shown behind modal panes. */
 #overlay {
     display: none; /* Hidden by default */
@@ -365,6 +373,8 @@ body {
     background-color: var(--bg-overlay); /* Use variable for semi-transparent background */
     z-index: 5; /* Position it above welcome, below info/request/settings */
 }
+/* --- End Overlay Styling --- */
+
 
 /* Panes within Main Content - Controlled by JS */
 /* Styles for the default welcome message shown when no chat is active. */
@@ -374,17 +384,18 @@ body {
     color: var(--text-secondary); /* Secondary text color */
     max-width: 550px; /* Limit width for readability */
     line-height: 1.7; /* Increase line height */
+    /* display: none; */ /* Initially hidden/shown by JS */
     position: relative; /* Ensure it participates in stacking context */
     z-index: 1; /* Position it below the overlay */
 }
 /* Styles the main heading in the welcome message. */
 #welcome-message h2 {
     color: var(--text-light-strong); /* Stronger text color */
-    margin-bottom: 10px; /* Space below heading */
+    margin-bottom: 10px; /* Reduced space below heading */
     font-weight: 300; /* Lighter font weight */
     font-size: 1.8em; /* Larger font size */
 }
-/* Version Display Styling */
+/* --- Version Display Styling --- */
 #app-version-display {
     font-size: 0.85em; /* Smaller font size */
     color: var(--accent-blue); /* Blue accent color */
@@ -392,6 +403,7 @@ body {
     margin-bottom: 25px; /* Space below version */
     /* Inherits text-align: center */
 }
+/* --- End Version Display Styling --- */
 /* Styles paragraphs within the welcome message. */
 #welcome-message p {
     margin-bottom: 15px; /* Space below paragraphs */
@@ -403,7 +415,7 @@ body {
     font-weight: 600; /* Semi-bold weight */
 }
 
-/* Welcome Logo Styling */
+/* --- Welcome Logo Styling --- */
 /* Styles the logo image added to the welcome message pane. */
 #welcome-logo {
     display: block; /* Allows margin auto for centering */
@@ -412,18 +424,21 @@ body {
     margin: 0 auto 25px auto; /* Center horizontally, add 25px margin below */
     opacity: 0.8; /* Slightly transparent */
 }
+/* --- End Welcome Logo Styling --- */
+
 
 /* Styles the area displayed when an incoming chat request is received. */
 #incoming-request-area {
     padding: 20px; /* Inner spacing */
     border: 1px dashed var(--border-color-info); /* Dashed border */
+    /* margin: 30px auto; REMOVED - Use absolute positioning */
     background-color: var(--bg-info); /* Info background color */
     text-align: center; /* Center text */
     max-width: 450px; /* Limit width */
     width: 90%; /* Responsive width */
     border-radius: 5px; /* Rounded corners */
     color: var(--text-info); /* Info text color */
-    display: none; /* Initially hidden/shown by JS */
+    /* display: none; */ /* Initially hidden/shown by JS */
     position: absolute; /* Position relative to #main-content */
     top: 50%;           /* Center vertically */
     left: 50%;          /* Center horizontally */
@@ -443,6 +458,7 @@ body {
     background-color: var(--bg-danger-info); /* Danger info background */
     color: var(--text-light); /* Standard light text */
     text-align: center; /* Center text */
+    /* margin: 30px auto; REMOVED - Use absolute positioning */
     max-width: 450px; /* Limit width */
     width: 90%; /* Responsive width */
     border-radius: 5px; /* Rounded corners */
@@ -475,6 +491,7 @@ body {
     background-color: var(--bg-info); /* Info background color */
     color: var(--text-info); /* Info text color */
     text-align: center; /* Center text */
+    /* margin: 30px auto; REMOVED - Use absolute positioning */
     max-width: 450px; /* Limit width */
     width: 90%; /* Responsive width */
     border-radius: 5px; /* Rounded corners */
@@ -547,7 +564,7 @@ body {
     margin-bottom: 10px; /* Space below messages, before typing indicator/input */
     padding: 10px; /* Inner spacing */
     background-color: var(--bg-message-area); /* Specific background for messages */
-    /* Font family and size are controlled by JS via inline styles */
+    /* Font family and size will be controlled by JS */
 }
 
 /* IRC Style Message Display */
@@ -601,7 +618,7 @@ body {
     color: var(--text-light); /* Default light text color */
 }
 
-/* Link Styling within Messages */
+/* --- Link Styling within Messages --- */
 /* Styles anchor tags specifically within the message text span */
 .message-text a {
     color: var(--text-link); /* Use the defined link color */
@@ -609,22 +626,26 @@ body {
     word-break: break-all; /* Allow long URLs to break anywhere */
 }
 .message-text a:hover {
-    text-decoration: none; /* Remove underline on hover */
+    text-decoration: none; /* Optional: Remove underline on hover */
 }
+/* --- End Link Styling --- */
 
-/* /me Action Message Styling */
+/* --- /me Action Message Styling --- */
 /* Styles the container for a /me action message. */
 .message-me-action {
     color: var(--text-action); /* Use a distinct color for action text */
     font-style: italic; /* Italicize action messages */
     text-align: left; /* Align left */
+    /* Optional: Add a subtle background or border if desired */
+    /* background-color: rgba(255, 213, 79, 0.05); */
 }
 /* Styles the inner span containing the action text itself. */
 .message-me-action .action-text {
     display: inline; /* Keep on same line as timestamp */
 }
+/* --- End /me Action Styling --- */
 
-/* Command Error Message Styling */
+/* --- Command Error Message Styling --- */
 /* Styles system messages that are specifically command errors. */
 .message-command-error {
     color: var(--text-error); /* Use the error text color */
@@ -635,9 +656,10 @@ body {
 .message-command-error .error-text {
     display: inline; /* Keep on same line as timestamp */
 }
+/* --- End Command Error Styling --- */
 
 
-/* File Transfer Message Styling */
+/* --- File Transfer Message Styling --- */
 /* Styles the container for a file transfer status message. */
 /* This structure is added dynamically by UIController.js */
 .message-file-transfer {
@@ -761,8 +783,10 @@ body {
     background-color: var(--bg-button-hover);
     color: #ffffff; /* Brighter link color on hover */
 }
+/* --- End File Transfer Message Styling --- */
 
-/* Typing Indicator Styling */
+
+/* --- Typing Indicator Styling --- */
 /* Styles the container area reserved for the typing indicator below the message area. */
 #typing-indicator-area {
     height: 20px; /* Reserve a fixed height for the indicator */
@@ -777,6 +801,8 @@ body {
     color: var(--text-secondary); /* Use secondary text color */
     display: none; /* Hidden by default, shown by JS */
 }
+/* ----------------------------------- */
+
 
 /* Styles the container for the message input field and send button. */
 #message-input-area {
@@ -792,7 +818,7 @@ body {
     margin-right: 8px; /* Space between input field and send button */
 }
 
-/* Attach Button Styling */
+/* --- Attach Button Styling --- */
 /* Styles the attach button specifically. */
 #attach-button {
     background: none; /* Transparent background */
@@ -824,6 +850,8 @@ body {
     cursor: not-allowed;
     opacity: 0.5;
 }
+/* --- End Attach Button Styling --- */
+
 
 /* Styles the send button specifically within the input area. */
 #message-input-area #send-button { /* Use more specific selector */
@@ -831,7 +859,7 @@ body {
     flex-shrink: 0; /* Prevent send button from shrinking */
 }
 
-/* Settings Pane Styling */
+/* --- Settings Pane Styling --- */
 /* Styles the settings pane container. */
 #settings-pane {
     display: none; /* Hidden by default, shown by JS */
@@ -913,13 +941,14 @@ body {
     margin: 20px auto 0 auto; /* Center the button horizontally, add top margin */
     min-width: 100px; /* Minimum width */
 }
+/* --- End Settings Pane Styling --- */
 
 
 /* General Input/Button Styling */
-/* Base styles for all text input fields, number inputs, and select dropdowns. */
+/* Base styles for all text input fields. */
 input[type="text"],
-input[type="number"],
-select {
+input[type="number"], /* Add number input */
+select { /* Add select element */
     background-color: var(--bg-input); /* Input background color */
     color: var(--text-light); /* Text color */
     border: 1px solid var(--border-color-input); /* Input border color */
@@ -946,7 +975,8 @@ select:disabled {
     opacity: 0.6; /* Reduce opacity */
 }
 
-/* Base styles for all buttons (excluding specific icon buttons and disconnect). */
+/* Base styles for all buttons (excluding icon buttons and disconnect). */
+/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
 button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button) {
     padding: 8px 15px; /* Default padding */
     cursor: pointer; /* Indicate interactivity */
@@ -957,16 +987,19 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     font-size: 0.95em; /* Slightly smaller font size */
     transition: background-color 0.15s ease, border-color 0.15s ease; /* Smooth transitions */
 }
-/* Styles for buttons on hover (excluding specific icon buttons and disconnect). */
+/* Styles for buttons on hover (excluding icon buttons and disconnect). */
+/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
 button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):hover {
     background-color: var(--bg-button-hover); /* Hover background color */
     border-color: #666; /* Slightly lighter border */
 }
-/* Styles for buttons when actively being clicked (excluding specific icon buttons and disconnect). */
+/* Styles for buttons when actively being clicked (excluding icon buttons and disconnect). */
+/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
 button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):active {
      background-color: var(--bg-button-active); /* Active background color */
 }
-/* Styles for disabled buttons (excluding specific icon buttons and disconnect). */
+/* Styles for disabled buttons (excluding icon buttons and disconnect). */
+/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
 button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):disabled {
     background-color: var(--bg-button-disabled); /* Disabled background */
     border-color: var(--border-color-input); /* Use input border color */
@@ -975,7 +1008,7 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     opacity: 0.6; /* Reduce opacity */
 }
 
-/* Emoji Picker Button Styling */
+/* --- NEW: Emoji Picker Button Styling --- */
 #emoji-picker-button {
     background: none;
     border: 1px solid transparent;
@@ -1003,8 +1036,9 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     cursor: not-allowed;
     opacity: 0.5;
 }
+/* --- END NEW --- */
 
-/* Emoji Picker Panel Styling */
+/* --- NEW: Emoji Picker Panel Styling --- */
 .emoji-picker {
     display: none; /* Hidden by default */
     position: absolute; /* Position relative to nearest positioned ancestor (likely #main-content or body) */
@@ -1017,10 +1051,9 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     max-height: 200px; /* Limit height and allow scrolling */
     overflow-y: auto;
     width: 280px; /* Adjust width as needed */
-    /* Positioning is set by JS */
+    /* Positioning will be set by JS */
 }
 
-/* Styles individual emoji spans within the picker */
 .emoji-picker span {
     display: inline-block;
     padding: 4px;
@@ -1030,10 +1063,10 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     transition: background-color 0.1s ease;
 }
 
-/* Styles emoji spans on hover */
 .emoji-picker span:hover {
     background-color: var(--bg-emoji-hover);
 }
+/* --- END NEW --- */
 
 
 /* Dark Scrollbar Styling (WebKit/Blink - Chrome, Safari, Edge, Opera) */
