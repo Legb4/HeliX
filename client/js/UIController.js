@@ -69,6 +69,7 @@ class UIController {
 
         this.messageInputArea = document.getElementById('message-input-area'); // Container for input and send button
         this.attachButton = document.getElementById('attach-button'); // Attach button reference
+        this.emojiPickerButton = document.getElementById('emoji-picker-button'); // NEW: Emoji picker button
         this.messageInput = document.getElementById('message-input'); // The message text input field
         this.sendButton = document.getElementById('send-button'); // Send message button
         this.disconnectButton = document.getElementById('disconnect-button'); // Disconnect button in chat header
@@ -81,6 +82,9 @@ class UIController {
 
         // File Input Element (Hidden)
         this.fileInput = document.getElementById('file-input'); // Hidden file input reference
+
+        // Emoji Picker Panel
+        this.emojiPickerPanel = document.getElementById('emoji-picker-panel'); // NEW: Emoji picker panel
 
         // --- Audio Management ---
         // Object to hold preloaded Audio elements.
@@ -125,6 +129,22 @@ class UIController {
         this.objectUrls = new Map();
         // ---------------------------
 
+        // --- Emoji List ---
+        // Define the list of emojis to display in the picker.
+        // (This is a sample list, can be expanded significantly)
+        this.emojiList = [
+            '😊', '😂', '😍', '🤔', '😎', '😭', '👍', '👎', '❤️', '💔', '🎉', '🔥', '💯', '✅', '❌',
+            '👋', '🙏', '👀', '✨', '🚀', '💡', '⚙️', '📎', '🔗', '🔒', '🔓', '🔔', '🔇', '🔊', '💬',
+            '😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😇', '😉', '😌', '😋', '😛', '😜', '🤪', '🤨',
+            '🧐', '🤓', '🥳', '🥴', '🥺', '😢', '😠', '😡', '🤯', '😳', '😱', '😨', '😰', '😥', '😓',
+            '🤗', '🤭', '🤫', '🤥', '😶', '😐', '😑', '😬', '🙄', '😯', '😦', '😧', '😮', '😲', '😴',
+            '🤤', '😪', '😵', '🤐', '🤢', '🤮', '🤧', '😷', '🤒', '🤕', '🤑', '🤠', '😈', '👿', '👹',
+            '👺', '🤡', '💩', '👻', '💀', '👽', '👾', '🤖', '🎃', '😺', '😸', '😹', '😻', '😼', '😽',
+            '🙀', '😿', '😾', '🙈', '🙉', '🙊', '💋', '💌', '💘', '💝', '💖', '💗', '💓', '💞', '💕',
+            '💟', '❣️', '💤', '💢', '💣', '💥', '💦', '💨', '💫', '💬', '💭', '👁️‍🗨️', // ... add many more
+        ];
+        // ------------------
+
         // --- Initial State ---
         // Set the initial visibility of UI sections.
         this.showRegistration();
@@ -132,6 +152,8 @@ class UIController {
         this.updateMuteButtonIcon();
         // Apply initial chat styles based on default settings values.
         this.applyInitialChatStyles();
+        // Populate the emoji picker panel
+        this._populateEmojiPicker();
 
         // Log initialization (not wrapped in DEBUG as it's fundamental)
         console.log('UIController initialized.');
@@ -173,6 +195,9 @@ class UIController {
         if (this.overlay) this.overlay.style.display = 'none'; // Hide overlay too
         // Also ensure the typing indicator is hidden when switching panes.
         this.hideTypingIndicator();
+        // --- NEW: Hide emoji picker when switching main panes ---
+        if (this.emojiPickerPanel) this.emojiPickerPanel.style.display = 'none';
+        // --- END NEW ---
     }
 
     /**
@@ -492,9 +517,11 @@ class UIController {
         if (this.messageInput) this.messageInput.disabled = !enabled || loadingState;
         this._setButtonState(this.sendButton, enabled, loadingState, "Sending...");
         this._setButtonState(this.disconnectButton, enabled, loadingState, "Disconnecting...");
-        // Also handle the attach button
+        // Also handle the attach and emoji buttons
         if (this.attachButton) this.attachButton.disabled = !enabled || loadingState;
+        if (this.emojiPickerButton) this.emojiPickerButton.disabled = !enabled || loadingState; // NEW
     }
+
 
     /** Enables/disables info pane controls (Close, Retry), optionally showing loading state. */
     setInfoControlsEnabled(enabled, loadingState = false) {
@@ -672,12 +699,12 @@ class UIController {
         const textNode = document.createTextNode(` ${text}`); // Add leading space for separation
         textSpan.appendChild(textNode);
 
-        // --- NEW: Linkify URLs in regular messages ---
+        // --- Linkify URLs in regular messages ---
         // Only linkify for 'peer' and 'own' message types
         if (type === 'peer' || type === 'own') {
             this._linkifyTextNode(textNode);
         }
-        // --- END NEW ---
+        // --- END ---
 
         // Append elements to message container
         messageDiv.appendChild(timestampSpan);
@@ -1475,6 +1502,21 @@ class UIController {
     }
     // -----------------------------
 
+    // --- NEW: Emoji Picker Bindings ---
+    /**
+     * Binds a handler function to the emoji picker button's click event.
+     * @param {function} handler - The function to call when the button is clicked (likely toggleEmojiPicker).
+     */
+    bindEmojiPickerButton(handler) {
+        if (this.emojiPickerButton) {
+            this.emojiPickerButton.addEventListener('click', (event) => {
+                event.stopPropagation(); // Prevent click from immediately closing panel via document listener
+                handler();
+            });
+        }
+    }
+    // --- END NEW ---
+
     // --- NEW: Linkify Helper ---
     /**
      * Finds URLs within a given text node and replaces them with clickable links.
@@ -1483,6 +1525,8 @@ class UIController {
      * @private
      */
     _linkifyTextNode(textNode) {
+        // Regex to find URLs (http, https, ftp) or www. domains
+        // It captures the full URL (group 1) or the www. part (group 2)
         const urlRegex = /(\b(?:https?|ftp):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])|(\bwww\.[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
         const textContent = textNode.textContent;
         let match;
@@ -1535,6 +1579,127 @@ class UIController {
     }
     // --- END NEW ---
 
+    // --- NEW: Emoji Picker Methods ---
+    /**
+     * Populates the emoji picker panel with clickable emoji spans.
+     * @private
+     */
+    _populateEmojiPicker() {
+        if (!this.emojiPickerPanel) return;
+        // Clear existing emojis first
+        this.emojiPickerPanel.innerHTML = '';
+        // Iterate through the defined emoji list
+        this.emojiList.forEach(emoji => {
+            const emojiSpan = document.createElement('span');
+            emojiSpan.textContent = emoji;
+            emojiSpan.title = emoji; // Tooltip for accessibility/clarity
+            emojiSpan.role = 'button'; // Indicate it's clickable
+            emojiSpan.tabIndex = 0; // Make it focusable
+            // Add click listener to insert the emoji and close the picker
+            emojiSpan.addEventListener('click', () => {
+                this._insertEmoji(emoji);
+                this.toggleEmojiPicker(false); // Explicitly hide after selection
+            });
+            // Add keypress listener (Enter/Space) for accessibility
+            emojiSpan.addEventListener('keypress', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    this._insertEmoji(emoji);
+                    this.toggleEmojiPicker(false); // Explicitly hide after selection
+                }
+            });
+            this.emojiPickerPanel.appendChild(emojiSpan);
+        });
+        // Log population only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Populated emoji picker with ${this.emojiList.length} emojis.`);
+    }
+
+    /**
+     * Toggles the visibility of the emoji picker panel.
+     * Handles positioning and adding/removing the outside-click listener.
+     * @param {boolean} [forceShow] - Optional. If true, forces the panel to show. If false, forces hide. If undefined, toggles.
+     */
+    toggleEmojiPicker(forceShow) {
+        if (!this.emojiPickerPanel || !this.emojiPickerButton) return;
+
+        const shouldShow = (forceShow === undefined) ? this.emojiPickerPanel.style.display === 'none' : forceShow;
+
+        if (shouldShow) {
+            // Calculate position relative to the button
+            const buttonRect = this.emojiPickerButton.getBoundingClientRect();
+            const panelHeight = this.emojiPickerPanel.offsetHeight || 200; // Estimate height if not yet rendered
+
+            // Position above the button, aligned to the right edge of the button
+            this.emojiPickerPanel.style.bottom = `${window.innerHeight - buttonRect.top + 5}px`; // 5px gap above button
+            this.emojiPickerPanel.style.left = `${buttonRect.left}px`; // Align left edge initially
+            // Adjust right alignment if needed (might need refinement based on final CSS)
+            // this.emojiPickerPanel.style.right = `${window.innerWidth - buttonRect.right}px`;
+
+            this.emojiPickerPanel.style.display = 'block';
+            // Log show only if DEBUG is enabled.
+            if (config.DEBUG) console.log("UI: Showing emoji picker.");
+
+            // Add listener to close when clicking outside (use timeout to avoid immediate closure)
+            setTimeout(() => {
+                document.addEventListener('click', this._handleOutsideEmojiClick, { capture: true, once: true });
+            }, 0);
+
+        } else {
+            this.emojiPickerPanel.style.display = 'none';
+            // Log hide only if DEBUG is enabled.
+            if (config.DEBUG) console.log("UI: Hiding emoji picker.");
+            // Ensure the outside click listener is removed if it exists
+            document.removeEventListener('click', this._handleOutsideEmojiClick, { capture: true });
+        }
+    }
+
+    /**
+     * Handles clicks outside the emoji picker to close it.
+     * Bound to the document temporarily when the picker is open.
+     * @param {MouseEvent} event - The click event.
+     * @private
+     */
+    _handleOutsideEmojiClick = (event) => {
+        // Check if the click was outside the panel and not on the toggle button
+        if (this.emojiPickerPanel && !this.emojiPickerPanel.contains(event.target) && event.target !== this.emojiPickerButton) {
+            // Log outside click only if DEBUG is enabled.
+            if (config.DEBUG) console.log("UI: Click detected outside emoji picker. Closing.");
+            this.toggleEmojiPicker(false); // Force hide
+        } else {
+            // If click was inside or on button, re-add listener for next click
+            // (unless an emoji was clicked, which closes it anyway)
+             document.addEventListener('click', this._handleOutsideEmojiClick, { capture: true, once: true });
+        }
+    }
+
+    /**
+     * Inserts an emoji character into the message input field at the current cursor position.
+     * @param {string} emoji - The emoji character to insert.
+     * @private
+     */
+    _insertEmoji(emoji) {
+        if (!this.messageInput) return;
+
+        const input = this.messageInput;
+        const start = input.selectionStart; // Get current cursor start position
+        const end = input.selectionEnd; // Get current cursor end position
+        const text = input.value;
+
+        // Insert the emoji at the cursor position
+        input.value = text.substring(0, start) + emoji + text.substring(end);
+
+        // Move the cursor to after the inserted emoji
+        const newCursorPos = start + emoji.length;
+        input.selectionStart = newCursorPos;
+        input.selectionEnd = newCursorPos;
+
+        // Focus the input field again
+        input.focus();
+        // Log insertion only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Inserted emoji '${emoji}' at position ${start}.`);
+    }
+    // --- END NEW ---
+
 
     // --- Utility ---
     /**
@@ -1563,12 +1728,15 @@ class UIController {
             this.typingIndicatorArea, this.typingIndicatorText,
             this.messageInputArea,
             this.attachButton, // Added attach button
+            this.emojiPickerButton, // Added emoji button
             this.messageInput,
             this.sendButton, this.disconnectButton,
             // Settings Pane Elements
             this.settingsPane, this.fontFamilySelect, this.fontSizeInput, this.closeSettingsButton,
             // File Input
-            this.fileInput // Added file input
+            this.fileInput, // Added file input
+            // Emoji Picker Panel
+            this.emojiPickerPanel // Added emoji panel
         ];
         let allFound = true;
         // Validate DOM elements

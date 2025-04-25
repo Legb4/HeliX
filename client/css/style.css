@@ -28,6 +28,8 @@
     --bg-danger-info: #442a31;          /* Background for error/denial info areas */
     --bg-settings: #2d2d30;             /* Background for the settings pane */
     --bg-overlay: rgba(0, 0, 0, 0.6);   /* Background for the overlay */
+    --bg-emoji-panel: #2d2d30;          /* NEW: Background for emoji picker */
+    --bg-emoji-hover: #3f3f46;          /* NEW: Background for emoji on hover */
 
     /* Text Colors */
     --text-light: #cccccc;              /* Primary light text color */
@@ -52,6 +54,7 @@
     --border-color-info: #666;          /* Border color for info elements */
     --border-color-settings: #444;      /* Border color for settings pane */
     --border-color-file: #4a4a55;       /* NEW: Border color for file transfer messages */
+    --border-color-emoji-panel: #444;   /* NEW: Border color for emoji picker */
 
     /* Accent Colors */
     --accent-red: #f44336;              /* Red accent (e.g., notification dot) */
@@ -615,7 +618,7 @@ body {
     color: var(--text-light); /* Default light text color */
 }
 
-/* --- NEW: Link Styling within Messages --- */
+/* --- Link Styling within Messages --- */
 /* Styles anchor tags specifically within the message text span */
 .message-text a {
     color: var(--text-link); /* Use the defined link color */
@@ -625,7 +628,7 @@ body {
 .message-text a:hover {
     text-decoration: none; /* Optional: Remove underline on hover */
 }
-/* --- END NEW --- */
+/* --- End Link Styling --- */
 
 /* --- /me Action Message Styling --- */
 /* Styles the container for a /me action message. */
@@ -973,8 +976,8 @@ select:disabled {
 }
 
 /* Base styles for all buttons (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #attach-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button) {
+/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button) {
     padding: 8px 15px; /* Default padding */
     cursor: pointer; /* Indicate interactivity */
     border: 1px solid var(--border-color); /* Default border */
@@ -985,25 +988,86 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     transition: background-color 0.15s ease, border-color 0.15s ease; /* Smooth transitions */
 }
 /* Styles for buttons on hover (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #attach-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):hover {
+/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):hover {
     background-color: var(--bg-button-hover); /* Hover background color */
     border-color: #666; /* Slightly lighter border */
 }
 /* Styles for buttons when actively being clicked (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #attach-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):active {
+/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):active {
      background-color: var(--bg-button-active); /* Active background color */
 }
 /* Styles for disabled buttons (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #attach-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):disabled {
+/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):disabled {
     background-color: var(--bg-button-disabled); /* Disabled background */
     border-color: var(--border-color-input); /* Use input border color */
     color: var(--text-button-disabled); /* Disabled text color */
     cursor: not-allowed; /* Indicate non-interactivity */
     opacity: 0.6; /* Reduce opacity */
 }
+
+/* --- NEW: Emoji Picker Button Styling --- */
+#emoji-picker-button {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--text-secondary);
+    padding: 6px 8px; /* Match attach button */
+    margin-right: 6px; /* Space between emoji and input */
+    font-size: 1.3em; /* Match attach button */
+    cursor: pointer;
+    border-radius: 3px;
+    line-height: 1;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+#emoji-picker-button:hover {
+    background-color: var(--bg-button-hover);
+    border-color: var(--border-color-input);
+    color: var(--text-light);
+}
+#emoji-picker-button:active {
+    background-color: var(--bg-button-active);
+}
+#emoji-picker-button:disabled {
+    background: none;
+    border-color: transparent;
+    color: var(--text-button-disabled);
+    cursor: not-allowed;
+    opacity: 0.5;
+}
+/* --- END NEW --- */
+
+/* --- NEW: Emoji Picker Panel Styling --- */
+.emoji-picker {
+    display: none; /* Hidden by default */
+    position: absolute; /* Position relative to nearest positioned ancestor (likely #main-content or body) */
+    background-color: var(--bg-emoji-panel);
+    border: 1px solid var(--border-color-emoji-panel);
+    border-radius: 5px;
+    padding: 10px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    z-index: 100; /* Ensure it's above most other elements */
+    max-height: 200px; /* Limit height and allow scrolling */
+    overflow-y: auto;
+    width: 280px; /* Adjust width as needed */
+    /* Positioning will be set by JS */
+}
+
+.emoji-picker span {
+    display: inline-block;
+    padding: 4px;
+    font-size: 1.4em; /* Adjust emoji size */
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background-color 0.1s ease;
+}
+
+.emoji-picker span:hover {
+    background-color: var(--bg-emoji-hover);
+}
+/* --- END NEW --- */
+
 
 /* Dark Scrollbar Styling (WebKit/Blink - Chrome, Safari, Edge, Opera) */
 /* Styles the scrollbar track and thumb for a dark theme. */

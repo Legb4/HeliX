@@ -241,7 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // ------------------------------------
 
-    // --- NEW: Bind File Transfer UI Elements ---
+    // --- File Transfer UI Elements ---
     // Bind Attach Button click to trigger the hidden file input.
     uiController.bindAttachButton(() => {
         // Log attach click only if DEBUG is enabled.
@@ -285,6 +285,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 100); // 100ms delay
     });
     // -----------------------------------------
+
+    // --- NEW: Bind Emoji Picker Button ---
+    uiController.bindEmojiPickerButton(() => {
+        // Log emoji button click only if DEBUG is enabled.
+        if (config.DEBUG) console.log("Emoji picker button clicked.");
+        uiController.toggleEmojiPicker(); // Toggle the picker's visibility
+    });
+    // --- END NEW ---
 
 
     // --- 4. Add Page Unload / Hide Event Listeners for Cleanup ---

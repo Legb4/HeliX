@@ -88,9 +88,9 @@
                 <img id="welcome-logo" src="favicon.ico" alt="HeliX Logo">
                 <!-- End Added Logo Image -->
                 <h2>Welcome to HeliX Chat!</h2>
-                <!-- NEW: Version Display -->
+                <!-- Version Display -->
                 <p id="app-version-display"></p> <!-- Version will be inserted here by JS -->
-                <!-- END NEW -->
+                <!-- END Version Display -->
                 <p>Your secure, ephemeral E2EE chat application.</p>
                 <p>Use the sidebar to start a new chat by entering a peer's ID, or wait for an incoming request.</p>
                 <p>Remember to share your ID (<strong id="my-identifier-welcome"></strong>) with others out-of-band.</p> <!-- Displays user's ID again -->
@@ -158,15 +158,17 @@
                 </div>
                 <!-- Area containing the message input field and send button -->
                 <div id="message-input-area">
-                    <!-- NEW: Attach File Button -->
+                    <!-- Attach File Button -->
                     <button id="attach-button" title="Attach File">📎</button>
-                    <!-- End Attach File Button -->
+                    <!-- NEW: Emoji Picker Button -->
+                    <button id="emoji-picker-button" title="Emoji">😊</button>
+                    <!-- END NEW -->
                     <input type="text" id="message-input" placeholder="Type your message..."> <!-- Input field for typing messages -->
                     <button id="send-button">Send</button> <!-- Button to send the typed message -->
                 </div>
             </div> <!-- End active-chat-area -->
 
-            <!-- NEW: Settings Pane -->
+            <!-- Settings Pane -->
             <!-- This pane allows users to configure application settings. -->
             <!-- It appears *on top* of the overlay. Hidden by default. -->
             <div id="settings-pane">
@@ -202,10 +204,16 @@
     <!-- Displays the current connection status or other relevant information. -->
     <div id="status" class="status-bar">Status: Initializing...</div>
 
-    <!-- NEW: Hidden File Input -->
+    <!-- Hidden File Input -->
     <!-- This input is triggered programmatically by the attach button -->
     <input type="file" id="file-input" style="display: none;">
     <!-- End Hidden File Input -->
+
+    <!-- NEW: Emoji Picker Panel (Initially Hidden) -->
+    <div id="emoji-picker-panel" class="emoji-picker">
+        <!-- Emojis will be populated here by JavaScript -->
+    </div>
+    <!-- END NEW -->
 
     <!-- Load JavaScript Files -->
     <!-- Scripts are loaded at the end of the body to ensure the DOM is parsed before they run. -->
