@@ -42,55 +42,50 @@
                 <button id="start-chat-button">Start Chat</button> <!-- Button to initiate the chat -->
             </div>
 
-            <!-- NEW: Separator Line -->
+            <!-- Separator Line -->
             <hr>
-            <!-- End Separator Line -->
 
             <!-- Sidebar Controls Area (for Mute/Settings Buttons) -->
-            <!-- This div holds controls like the mute button, placed below initiation and above session list. -->
+            <!-- This div holds controls like the mute and settings buttons, placed below initiation and above session list. -->
             <div id="sidebar-controls">
                 <button id="mute-button" title="Mute/Unmute Notifications">
-                    <span>🔊</span> <!-- Initial icon (Unmuted). JS will change this. -->
+                    <span>🔊</span> <!-- Initial icon (Unmuted). JS changes this. -->
                 </button>
                 <button id="settings-button" title="Settings">
                     <span>⚙️</span> <!-- Settings Gear Icon -->
                 </button>
-                <!-- Add other sidebar controls here if needed in the future -->
-            </div>
-            <!-- End Sidebar Controls Area -->
+                <!-- Other sidebar controls can be added here if needed in the future -->
+            </div> <!-- End Sidebar Controls Area -->
 
             <!-- Container for the list of active and pending chat sessions -->
             <div id="session-list-container">
                 <h2>Chat Sessions</h2> <!-- Heading for the session list -->
                 <ul id="session-list">
                     <!-- Session list items (<li>) will be added here dynamically by JavaScript -->
-                    <!-- Each item will typically contain the peer's ID and potentially a notification dot -->
+                    <!-- Each item typically contains the peer's ID and potentially a notification dot -->
                 </ul>
             </div>
         </div> <!-- End sidebar -->
 
         <!-- Main Content Area -->
         <!-- This area displays different views depending on the application state (welcome, active chat, incoming request, etc.). -->
-        <!-- It now contains the overlay and all the content panes. -->
+        <!-- It contains the overlay and all the content panes. -->
         <div id="main-content">
 
             <!-- Overlay Element -->
-            <!-- This div will cover the main content area with a semi-transparent background -->
+            <!-- This div covers the main content area with a semi-transparent background -->
             <!-- when modal-like panes (Info, Incoming Request, Settings) are shown. -->
             <div id="overlay"></div>
-            <!-- End Overlay Element -->
 
             <!-- Welcome Message (Shown when registered but no chat selected) -->
             <!-- This is the default view after registration. -->
-            <!-- It will remain visible *behind* the overlay when info/request panes are shown. -->
+            <!-- It remains visible *behind* the overlay when info/request panes are shown. -->
             <div id="welcome-message">
-                <!-- Added Logo Image -->
+                <!-- Logo Image -->
                 <img id="welcome-logo" src="favicon.ico" alt="HeliX Logo">
-                <!-- End Added Logo Image -->
                 <h2>Welcome to HeliX Chat!</h2>
                 <!-- Version Display -->
                 <p id="app-version-display"></p> <!-- Version will be inserted here by JS -->
-                <!-- END Version Display -->
                 <p>Your secure, ephemeral E2EE chat application.</p>
                 <p>Use the sidebar to start a new chat by entering a peer's ID, or wait for an incoming request.</p>
                 <p>Remember to share your ID (<strong id="my-identifier-welcome"></strong>) with others out-of-band.</p> <!-- Displays user's ID again -->
@@ -98,7 +93,7 @@
 
             <!-- Incoming Request Area (Shown temporarily when a peer requests a chat) -->
             <!-- This view allows the user to accept or deny an incoming chat request. -->
-            <!-- It will appear *on top* of the overlay. -->
+            <!-- It appears *on top* of the overlay. -->
             <div id="incoming-request-area">
                 <div id="incoming-request-text"></div> <!-- Text displaying who sent the request -->
                 <button id="accept-button">Accept</button> <!-- Button to accept the request -->
@@ -107,7 +102,7 @@
 
             <!-- Info Area (Shown for Denials, Timeouts, Errors related to a session) -->
             <!-- This view displays messages like "Request denied", "Request timed out", etc. -->
-            <!-- It will appear *on top* of the overlay. -->
+            <!-- It appears *on top* of the overlay. -->
             <div id="info-area">
                 <p id="info-message"></p> <!-- The specific information message -->
                 <button id="retry-request-button">Retry</button> <!-- Button to retry a timed-out request (shown conditionally) -->
@@ -116,7 +111,7 @@
 
             <!-- Waiting for Response Area (Shown after initiating a chat, before peer responds) -->
             <!-- This view indicates that the application is waiting for the peer to accept/deny the request. -->
-            <!-- This pane replaces the welcome message, overlay is not used here. -->
+            <!-- This pane replaces the welcome message; overlay is not used here. -->
             <div id="waiting-response-area">
                 <p id="waiting-response-text"></p> <!-- Text indicating waiting status (e.g., "Waiting for PeerID...") -->
                 <button id="cancel-request-button">Cancel Request</button> <!-- Button to cancel the outgoing request -->
@@ -124,7 +119,7 @@
 
             <!-- Active Chat Area (Shown when a chat session is established and selected) -->
             <!-- This is the main chat view containing the message history and input field. -->
-            <!-- This pane replaces the welcome message, overlay is not used here. -->
+            <!-- This pane replaces the welcome message; overlay is not used here. -->
             <div id="active-chat-area">
                 <!-- Header for the active chat, showing peer ID and disconnect button -->
                 <div id="chat-header">
@@ -135,21 +130,7 @@
                 <!-- Regular messages and file transfer status messages will be added here dynamically by JavaScript -->
                 <div id="message-area">
                     <!-- Messages (divs) will be added here dynamically by JavaScript -->
-                    <!-- Example structure for file transfer (added by JS, not hardcoded here):
-                    <div class="message-file-transfer" data-transfer-id="UNIQUE_ID">
-                        <span class="file-info">
-                            <span class="file-name">example.zip</span> (<span class="file-size">1.2 MB</span>)
-                        </span>
-                        <span class="file-status">Waiting for acceptance...</span>
-                        <progress class="file-progress" max="100" value="0" style="display: none;"></progress>
-                        <div class="file-actions">
-                            <button class="file-accept-btn" style="display: none;">Accept</button>
-                            <button class="file-reject-btn" style="display: none;">Reject</button>
-                            <button class="file-cancel-btn">Cancel</button>
-                            <a class="file-download-link" style="display: none;">Download</a>
-                        </div>
-                    </div>
-                    -->
+                    <!-- File transfer messages are added dynamically by UIController.js -->
                 </div>
                 <!-- Typing Indicator Area -->
                 <!-- This div holds the text indicating if the peer is currently typing. -->
@@ -160,9 +141,8 @@
                 <div id="message-input-area">
                     <!-- Attach File Button -->
                     <button id="attach-button" title="Attach File">📎</button>
-                    <!-- NEW: Emoji Picker Button -->
+                    <!-- Emoji Picker Button -->
                     <button id="emoji-picker-button" title="Emoji">😊</button>
-                    <!-- END NEW -->
                     <input type="text" id="message-input" placeholder="Type your message..."> <!-- Input field for typing messages -->
                     <button id="send-button">Send</button> <!-- Button to send the typed message -->
                 </div>
@@ -193,8 +173,7 @@
                 </div>
                 <!-- Add more settings sections here in the future -->
                 <button id="close-settings-button">Close</button>
-            </div>
-            <!-- End Settings Pane -->
+            </div> <!-- End Settings Pane -->
 
         </div> <!-- End main-content -->
 
@@ -207,13 +186,12 @@
     <!-- Hidden File Input -->
     <!-- This input is triggered programmatically by the attach button -->
     <input type="file" id="file-input" style="display: none;">
-    <!-- End Hidden File Input -->
 
-    <!-- NEW: Emoji Picker Panel (Initially Hidden) -->
+    <!-- Emoji Picker Panel (Initially Hidden) -->
+    <!-- This panel displays emojis that can be inserted into the message input. -->
     <div id="emoji-picker-panel" class="emoji-picker">
         <!-- Emojis will be populated here by JavaScript -->
     </div>
-    <!-- END NEW -->
 
     <!-- Load JavaScript Files -->
     <!-- Scripts are loaded at the end of the body to ensure the DOM is parsed before they run. -->

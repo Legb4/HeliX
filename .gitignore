@@ -8,14 +8,14 @@ certs/*.pem
 # Also ignore the backup files created by the manager script.
 certs/*_old.pem
 
-# Ignore log files within the logs directory (if you don't want logs committed)
+# Ignore log files within the logs directory.
 logs/*.log
 
-# Optional: Common virtual environment folders (if you use one)
+# Common virtual environment folders (commented out by default).
 # venv/
 # env/
 # *.venv
 # .env
 
-# Ignoring prompt generator
+# Ignore specific development utility scripts.
 generate_prompt.py

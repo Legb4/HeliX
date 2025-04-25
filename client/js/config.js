@@ -10,8 +10,6 @@ const config = {
      * - Replace 'localhost' with the actual hostname or IP address of your server if deployed.
      * - Ensure the port number (e.g., 5678) matches the port the Python WebSocket server is listening on.
      */
-    // Use wss:// and the actual hostname/IP of your server
-    // Ensure the port matches the WebSocket server port (e.g., 5678)
     webSocketUrl: 'wss://localhost:5678',
 
     /**
@@ -26,11 +24,11 @@ const config = {
 
     /**
      * Application Version String.
-     * - Used by the /version command.
+     * - Used by the /version command to display the current client version.
      */
-    APP_VERSION: "0.1 beta test", // NEW: Application version string
+    APP_VERSION: "0.1 beta test", // Application version string
 };
 
 // Make the config object globally accessible (if not using modules)
 // If using ES modules, you would export this object instead.
-// window.config = config; // Uncomment if needed in a non-module environment
+// window.config = config;
