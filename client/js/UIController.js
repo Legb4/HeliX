@@ -5,7 +5,7 @@
  * This class is responsible for getting references to UI elements,
  * showing/hiding different sections of the application, updating text content,
  * enabling/disabling controls, adding/removing items from lists,
- * displaying messages (including file transfers), playing sounds, managing settings UI,
+ * displaying messages (including file transfers and actions), playing sounds, managing settings UI,
  * and binding event listeners to UI elements.
  * It acts as the presentation layer, controlled by the SessionManager.
  */
@@ -46,6 +46,7 @@ class UIController {
         this.overlay = document.getElementById('overlay'); // Reference to the overlay div
         this.welcomeMessage = document.getElementById('welcome-message'); // Default welcome view
         this.myIdentifierWelcome = document.getElementById('my-identifier-welcome'); // User's ID display in welcome message
+        this.appVersionDisplay = document.getElementById('app-version-display'); // NEW: Version display element
         this.incomingRequestArea = document.getElementById('incoming-request-area'); // View for incoming requests
         this.incomingRequestText = document.getElementById('incoming-request-text'); // Text within incoming request view
         this.acceptButton = document.getElementById('accept-button'); // Accept button
@@ -193,6 +194,7 @@ class UIController {
     /**
      * Hides the registration area and shows the main application container (sidebar + main content).
      * Displays the user's ID and shows the default welcome message pane.
+     * Sets the application version display.
      * @param {string} myId - The user's registered identifier.
      */
     showMainApp(myId) {
@@ -202,9 +204,17 @@ class UIController {
         if (this.appContainer) this.appContainer.style.display = 'flex'; // Show the main layout
         if (this.myIdentifierDisplay) this.myIdentifierDisplay.textContent = myId; // Show ID in sidebar
         if (this.myIdentifierWelcome) this.myIdentifierWelcome.textContent = myId; // Show ID in welcome message
+        // --- NEW: Set Version Display ---
+        if (this.appVersionDisplay && config && config.APP_VERSION) {
+            this.appVersionDisplay.textContent = `Version: ${config.APP_VERSION}`;
+        } else if (this.appVersionDisplay) {
+            this.appVersionDisplay.textContent = 'Version: Unknown'; // Fallback
+        }
+        // --- END NEW ---
         this.showWelcomeMessage(); // Show the default pane
         this.setRegistrationControlsEnabled(false); // Disable registration controls
     }
+
 
     /**
      * Shows the welcome message pane in the main content area.
@@ -679,6 +689,151 @@ class UIController {
 
     /** Convenience method to add a system message. */
     addSystemMessage(text) { this.addMessage('System', text, 'system'); }
+
+    /**
+     * Adds a '/me' action message to the message display area.
+     * Formats as '* Sender actionText'. Includes timestamp. Scrolls to bottom.
+     * @param {string} sender - Identifier of the user performing the action.
+     * @param {string} actionText - The text of the action (what follows /me).
+     */
+    addMeActionMessage(sender, actionText) {
+        if (!this.messageArea) return; // Ignore if message area doesn't exist
+
+        // Check if user is scrolled near the bottom before adding the message.
+        const wasScrolledToBottom = this.messageArea.scrollHeight - this.messageArea.clientHeight <= this.messageArea.scrollTop + 1;
+
+        // Create message elements
+        const messageDiv = document.createElement('div');
+        messageDiv.classList.add('message-me-action'); // Use a specific class for styling
+
+        // Timestamp
+        const timestampSpan = document.createElement('span');
+        timestampSpan.className = 'message-timestamp';
+        const now = new Date();
+        const dateString = now.toLocaleDateString([], { month: '2-digit', day: '2-digit', year: 'numeric' });
+        const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        timestampSpan.textContent = `[${dateString} - ${timeString}]`;
+
+        // Action Text (formatted)
+        const actionSpan = document.createElement('span');
+        actionSpan.className = 'action-text'; // Use a class for the text part
+        // Use textContent to prevent potential HTML injection from actionText
+        actionSpan.textContent = ` * ${sender} ${actionText}`; // Format: * Sender action
+
+        // Append elements to message container
+        messageDiv.appendChild(timestampSpan);
+        messageDiv.appendChild(actionSpan);
+
+        // Add the complete message div to the message area
+        this.messageArea.appendChild(messageDiv);
+
+        // Auto-scroll to bottom if the user was already near the bottom.
+        if (wasScrolledToBottom) {
+            this.messageArea.scrollTop = this.messageArea.scrollHeight;
+        }
+    }
+
+    /**
+     * Adds a command error message to the message display area.
+     * Formats similarly to a system message but with an error class for styling.
+     * @param {string} errorMessage - The error message text to display.
+     */
+    addCommandError(errorMessage) {
+        if (!this.messageArea) return; // Ignore if message area doesn't exist
+
+        // Check if user is scrolled near the bottom before adding the message.
+        const wasScrolledToBottom = this.messageArea.scrollHeight - this.messageArea.clientHeight <= this.messageArea.scrollTop + 1;
+
+        // Create message elements
+        const messageDiv = document.createElement('div');
+        // Apply both system and error classes
+        messageDiv.classList.add('message-system', 'message-command-error');
+
+        // Timestamp
+        const timestampSpan = document.createElement('span');
+        timestampSpan.className = 'message-timestamp';
+        const now = new Date();
+        const dateString = now.toLocaleDateString([], { month: '2-digit', day: '2-digit', year: 'numeric' });
+        const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        timestampSpan.textContent = `[${dateString} - ${timeString}]`;
+
+        // Error Text
+        const errorSpan = document.createElement('span');
+        errorSpan.className = 'error-text'; // Use a class for the text part
+        // Use textContent for safety
+        errorSpan.textContent = ` ${errorMessage}`; // Add leading space
+
+        // Append elements to message container
+        messageDiv.appendChild(timestampSpan);
+        messageDiv.appendChild(errorSpan);
+
+        // Add the complete message div to the message area
+        this.messageArea.appendChild(messageDiv);
+
+        // Auto-scroll to bottom if the user was already near the bottom.
+        if (wasScrolledToBottom) {
+            this.messageArea.scrollTop = this.messageArea.scrollHeight;
+        }
+    }
+
+    /**
+     * Displays the application version information in the chat window.
+     * @param {string} versionString - The application version string (from config).
+     */
+    addVersionInfo(versionString) {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Displaying version info.");
+        this.addSystemMessage(`HeliX Version: ${versionString}`);
+    }
+
+    /**
+     * Displays current session and connection information in the chat window.
+     * @param {string} httpsUrl - The current client URL.
+     * @param {string} wssUrl - The WebSocket server URL.
+     * @param {string} myId - The user's registered identifier.
+     * @param {string} peerId - The identifier of the current chat peer.
+     */
+    addSessionInfo(httpsUrl, wssUrl, myId, peerId) {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Displaying session info.");
+        const now = new Date();
+        const dateTimeString = now.toLocaleString(); // Get locale-specific date/time string
+
+        // Build the info string with newlines for display
+        const infoText = `--- Session Info ---\n` +
+                         `Client URL: ${httpsUrl}\n` +
+                         `Server URL: ${wssUrl}\n` +
+                         `Your ID: ${myId}\n` +
+                         `Peer ID: ${peerId}\n` +
+                         `--------------------`;
+
+        // Split the string by newline and add each line as a system message
+        // This preserves formatting better than a single message with \n
+        infoText.split('\n').forEach(line => {
+            this.addSystemMessage(line);
+        });
+    }
+
+    /**
+     * Displays the help information listing available commands in the chat window.
+     */
+    addHelpInfo() {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Displaying help info.");
+        const helpText = `--- Available Commands ---\n` +
+                         `/me <action text> : Performs an action (e.g., /me waves).\n` +
+                         `/end : Ends the current chat session.\n` +
+                         `/version : Displays the current HeliX client version.\n` +
+                         `/info : Displays current session and connection information.\n` +
+                         `/help : Displays this help message.\n` +
+                         `------------------------`;
+
+        // Split the string by newline and add each line as a system message
+        helpText.split('\n').forEach(line => {
+            this.addSystemMessage(line);
+        });
+    }
+
 
     /** Clears all messages from the message display area. */
     clearMessages() { if (this.messageArea) this.messageArea.innerHTML = ''; }
@@ -1326,6 +1481,7 @@ class UIController {
             this.sessionListContainer, this.sessionList,
             this.mainContent, this.overlay,
             this.welcomeMessage, this.myIdentifierWelcome,
+            this.appVersionDisplay, // Added version display
             this.incomingRequestArea, this.incomingRequestText,
             this.acceptButton, this.denyButton,
             this.infoArea, this.infoMessage, this.closeInfoButton, this.retryRequestButton,

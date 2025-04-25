@@ -37,6 +37,7 @@
     --text-sender-peer: #ce9178;        /* Color for peer's sender name */
     --text-sender-own: #9cdcfe;         /* Color for own sender name */
     --text-sender-system: #dcdcaa;      /* Color for system message sender/prefix */
+    --text-action: #ffd54f;             /* NEW: Color for /me action messages (using info color) */
     --text-error: #f48771;              /* Text color for error messages */
     --text-info: #ffd54f;               /* Text color for informational messages */
     --text-button-disabled: #888888;    /* Text color for disabled buttons */
@@ -54,7 +55,7 @@
 
     /* Accent Colors */
     --accent-red: #f44336;              /* Red accent (e.g., notification dot) */
-    --accent-blue: #007acc;             /* Blue accent (e.g., input focus) */
+    --accent-blue: #007acc;             /* Blue accent (e.g., input focus, version text) */
     --accent-green: #4ec9b0;            /* Green accent (e.g., own ID highlight) */
     --accent-progress: #0e639c;         /* NEW: Color for progress bar */
 }
@@ -387,10 +388,19 @@ body {
 /* Styles the main heading in the welcome message. */
 #welcome-message h2 {
     color: var(--text-light-strong); /* Stronger text color */
-    margin-bottom: 25px; /* Space below heading */
+    margin-bottom: 10px; /* Reduced space below heading */
     font-weight: 300; /* Lighter font weight */
     font-size: 1.8em; /* Larger font size */
 }
+/* --- NEW: Version Display Styling --- */
+#app-version-display {
+    font-size: 0.85em; /* Smaller font size */
+    color: var(--accent-blue); /* Blue accent color */
+    margin-top: -5px; /* Pull it closer to the header */
+    margin-bottom: 25px; /* Space below version */
+    /* Inherits text-align: center */
+}
+/* --- END NEW --- */
 /* Styles paragraphs within the welcome message. */
 #welcome-message p {
     margin-bottom: 15px; /* Space below paragraphs */
@@ -576,7 +586,7 @@ body {
 .message-timestamp {
     color: var(--text-secondary); /* Secondary text color */
     font-size: 0.8em; /* Smaller font size */
-    margin-right: 8px; /* Space between timestamp and sender */
+    margin-right: 8px; /* Space between timestamp and sender/action */
     display: inline-block; /* Keep on the same line */
 }
 
@@ -604,6 +614,35 @@ body {
     display: inline; /* Keep on the same line as sender */
     color: var(--text-light); /* Default light text color */
 }
+
+/* --- /me Action Message Styling --- */
+/* Styles the container for a /me action message. */
+.message-me-action {
+    color: var(--text-action); /* Use a distinct color for action text */
+    font-style: italic; /* Italicize action messages */
+    text-align: left; /* Align left */
+    /* Optional: Add a subtle background or border if desired */
+    /* background-color: rgba(255, 213, 79, 0.05); */
+}
+/* Styles the inner span containing the action text itself. */
+.message-me-action .action-text {
+    display: inline; /* Keep on same line as timestamp */
+}
+/* --- End /me Action Styling --- */
+
+/* --- Command Error Message Styling --- */
+/* Styles system messages that are specifically command errors. */
+.message-command-error {
+    color: var(--text-error); /* Use the error text color */
+    font-weight: bold; /* Make error text bold */
+    /* Inherits italic style from .message-system */
+}
+/* Styles the inner span containing the error text itself. */
+.message-command-error .error-text {
+    display: inline; /* Keep on same line as timestamp */
+}
+/* --- End Command Error Styling --- */
+
 
 /* --- File Transfer Message Styling --- */
 /* Styles the container for a file transfer status message. */

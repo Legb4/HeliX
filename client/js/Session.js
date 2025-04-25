@@ -35,7 +35,9 @@ class Session {
         // keyDerivationPromise: Stores the promise returned by the key derivation process.
         // Used to ensure challenge decryption only happens after derivation completes.
         this.keyDerivationPromise = null;
-        this.messages = []; // Array to store message history objects { sender, text, type }.
+        // Array to store message history objects { sender, text, type }.
+        // Type can be 'peer', 'own', 'system', or 'me-action'.
+        this.messages = [];
         this.handshakeTimeoutId = null; // Stores the ID of the handshake timeout timer.
         this.requestTimeoutId = null; // Stores the ID of the initial request timeout timer.
 
@@ -146,9 +148,11 @@ class Session {
      * Adds a message object to the session's history.
      * @param {string} sender - The identifier of the sender ('System', own ID, or peer ID).
      * @param {string} text - The message content.
-     * @param {string} type - The message type ('system', 'own', 'peer').
+     * @param {string} type - The message type ('system', 'own', 'peer', 'me-action').
      */
     addMessageToHistory(sender, text, type) {
+        // Log history add only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${this.peerId}] Adding to history: {sender: ${sender}, type: ${type}, text: ${text.substring(0, 50)}...}`);
         this.messages.push({ sender, text, type });
         // No console log here by default, UIController handles display.
     }
@@ -287,7 +291,7 @@ class Session {
                 case 9: return this._handleSessionEnd(payload, manager); // Peer initiated session end
 
                 // Data Message
-                case 8: return await this._handleEncryptedMessage(payload, manager); // Encrypted chat message
+                case 8: return await this._handleEncryptedMessage(payload, manager); // Encrypted chat message or action
 
                 // Typing Indicators
                 case 10: return this._handleTypingStart(payload, manager); // Peer started typing
@@ -620,9 +624,10 @@ class Session {
     /**
      * Handles ENCRYPTED_CHAT_MESSAGE (Type 8) message from the peer.
      * Decrypts the message data using the derived AES session key.
+     * Attempts to parse the decrypted data as JSON to check for /me actions.
      * @param {object} payload - Expected: { iv: string (Base64), data: string (Base64) }
      * @param {SessionManager} manager - SessionManager instance.
-     * @returns {Promise<object>} Action object: { action: 'DISPLAY_MESSAGE', ... } on success, { action: 'DISPLAY_SYSTEM_MESSAGE', ... } or { action: 'NONE' } on failure/wrong state.
+     * @returns {Promise<object>} Action object: { action: 'DISPLAY_MESSAGE', ... } or { action: 'DISPLAY_ME_ACTION', ... } on success, { action: 'DISPLAY_SYSTEM_MESSAGE', ... } or { action: 'NONE' } on failure/wrong state.
      */
     async _handleEncryptedMessage(payload, manager) {
         const ivBase64 = payload.iv;
@@ -670,16 +675,50 @@ class Session {
             }
 
             // 3. Decode the decrypted buffer (UTF-8) into a string.
-            const messageText = this.cryptoModule.decodeText(decryptedDataBuffer);
+            const decryptedJsonString = this.cryptoModule.decodeText(decryptedDataBuffer);
 
-            // Log received message only if DEBUG is enabled.
-            if (config.DEBUG) {
-                console.log(`%c[${this.peerId}]: ${messageText}`, "color: purple;"); // Style console output
+            // --- BEGIN /me Action and Message Handling ---
+            let messagePayload;
+            try {
+                // 4. Attempt to parse the decrypted string as JSON.
+                messagePayload = JSON.parse(decryptedJsonString);
+            } catch (e) {
+                // If JSON parsing fails, assume it's a legacy plain text message or corrupted JSON.
+                // Log this warning only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`Session [${this.peerId}] Received non-JSON or corrupted JSON message payload. Treating as plain text.`);
+                messagePayload = null; // Indicate parsing failed
             }
-            this.addMessageToHistory(this.peerId, messageText, 'peer');
 
-            // Request SessionManager display the message.
-            return { action: 'DISPLAY_MESSAGE', sender: this.peerId, text: messageText, msgType: 'peer' };
+            // 5. Check the parsed payload structure.
+            if (messagePayload && messagePayload.isAction === true && typeof messagePayload.text === 'string') {
+                // It's a /me action message.
+                const actionText = messagePayload.text;
+                // Log received action only if DEBUG is enabled.
+                if (config.DEBUG) {
+                    console.log(`%c* ${this.peerId} ${actionText}`, "color: orange;"); // Style console output
+                }
+                // Add to history with 'me-action' type
+                this.addMessageToHistory(this.peerId, actionText, 'me-action');
+                // Request SessionManager display the action message.
+                return { action: 'DISPLAY_ME_ACTION', sender: this.peerId, text: actionText };
+            } else {
+                // It's either a regular message (isAction: false or missing) or parsing failed.
+                // --- FIX: Extract text from payload if parsing succeeded ---
+                const messageText = messagePayload ? messagePayload.text : decryptedJsonString;
+                // Ensure messageText is a string, even if payload.text was missing/invalid or parsing failed
+                const finalMessageText = typeof messageText === 'string' ? messageText : decryptedJsonString;
+                // --- END FIX ---
+
+                // Log received message only if DEBUG is enabled.
+                if (config.DEBUG) {
+                    console.log(`%c[${this.peerId}]: ${finalMessageText}`, "color: purple;"); // Style console output
+                }
+                // Add to history with 'peer' type
+                this.addMessageToHistory(this.peerId, finalMessageText, 'peer');
+                // Request SessionManager display the regular message.
+                return { action: 'DISPLAY_MESSAGE', sender: this.peerId, text: finalMessageText, msgType: 'peer' };
+            }
+            // --- END /me Action and Message Handling ---
 
         } catch (error) {
             // Always log errors during message handling.
@@ -688,6 +727,7 @@ class Session {
             return { action: 'DISPLAY_SYSTEM_MESSAGE', text: `Error processing message from ${this.peerId}: ${error.message}` };
         }
     }
+
 
     /**
      * Handles SESSION_END (Type 9) message from the peer.

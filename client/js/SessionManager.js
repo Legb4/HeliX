@@ -819,32 +819,36 @@ class SessionManager {
     }
 
     /**
-     * Encrypts and sends a chat message (Type 8) to the specified peer using the derived session key.
+     * Handles sending a chat message or processing a slash command.
+     * If it's a command like /me, it sends a structured payload.
+     * Otherwise, it sends a regular message payload.
+     * Encrypts the payload (as JSON string) and sends as Type 8.
+     * Updates local UI immediately.
      * @param {string} peerId - The identifier of the recipient peer.
-     * @param {string} text - The plaintext message to send.
+     * @param {string} text - The raw text entered by the user.
      */
     async sendEncryptedMessage(peerId, text) {
         // Log attempt only if DEBUG is enabled.
-        if (config.DEBUG) console.log(`Attempting to send encrypted message to ${peerId}: "${text}"`);
+        if (config.DEBUG) console.log(`Attempting to send message/command to ${peerId}: "${text}"`);
         const session = this.sessions.get(peerId);
         // Ensure session exists and is active.
         if (!session || session.state !== this.STATE_ACTIVE_SESSION) {
             // Always log this warning.
             console.warn(`Cannot send message: Session with ${peerId} not active.`);
-            // Provide feedback if trying to send in wrong state
+            // --- UPDATED: Use addCommandError for feedback ---
             if (this.displayedPeerId === peerId) {
-                this.uiController.addSystemMessage("Cannot send message: Session is not active.");
+                this.uiController.addCommandError("Error: Cannot send message, session is not active.");
             }
+            // --- END UPDATE ---
             return;
         }
-        // Ensure the derived session key exists within the session's crypto module.
+        // Ensure the derived session key exists.
         if (!session.cryptoModule.derivedSessionKey) {
             // Always log this critical error.
             console.error(`Session [${peerId}] Encryption key error: Missing derived session key.`);
-            this.uiController.playSound('error'); // Play error sound
-            // Use showInfoMessage for critical key error
+            this.uiController.playSound('error');
             this.uiController.showInfoMessage(peerId, "Encryption Error: Session key is missing. Please restart the session.", false);
-            await this.resetSession(peerId, false); // Reset session
+            await this.resetSession(peerId, false);
             return;
         }
         // Ensure message text is valid.
@@ -857,63 +861,140 @@ class SessionManager {
         this.sendTypingStop(peerId);
         // ------------------------------------------------
 
-        // Disable chat controls and show loading state while encrypting/sending.
+        // Disable chat controls and show loading state while processing/encrypting/sending.
         this.uiController.setChatControlsEnabled(false, true);
-        this.uiController.updateStatus(`Encrypting message to ${peerId}...`);
+        this.uiController.updateStatus(`Processing message to ${peerId}...`);
         let messageSent = false; // Flag to track if send was successful.
 
         try {
-            // 1. Encode the plaintext message to a UTF-8 ArrayBuffer.
-            const messageBuffer = session.cryptoModule.encodeText(text);
-            // 2. Encrypt the message buffer using the derived AES session key.
-            const aesResult = await session.cryptoModule.encryptAES(messageBuffer);
-            if (!aesResult) throw new Error("AES encryption failed.");
-            // 3. Encode the IV and the encrypted message data to Base64.
-            const ivBase64 = session.cryptoModule.arrayBufferToBase64(aesResult.iv);
-            const encryptedDataBase64 = session.cryptoModule.arrayBufferToBase64(aesResult.encryptedBuffer);
+            let payloadToSend = null; // This will hold the object {isAction, text} or null if handled locally
+            let localDisplayHandled = false; // Flag to track if local UI update is done
 
-            // 4. Construct the ENCRYPTED_CHAT_MESSAGE (Type 8) payload.
-            const message = {
-                type: 8,
-                payload: {
-                    targetId: peerId,
-                    senderId: this.identifier,
-                    iv: ivBase64,                     // AES IV
-                    data: encryptedDataBase64         // AES encrypted message
+            // --- Command Parsing Logic ---
+            if (text.startsWith('/')) {
+                const spaceIndex = text.indexOf(' ');
+                const command = (spaceIndex === -1 ? text.substring(1) : text.substring(1, spaceIndex)).toLowerCase();
+                const args = (spaceIndex === -1 ? '' : text.substring(spaceIndex + 1)).trim();
+
+                // Log command parsing only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`Parsed command: '${command}', args: '${args}'`);
+
+                localDisplayHandled = true; // Assume handled locally unless sending a message
+
+                switch (command) {
+                    case 'me':
+                        if (args) {
+                            // Valid /me command
+                            payloadToSend = { isAction: true, text: args };
+                            this.uiController.addMeActionMessage(this.identifier, args);
+                        } else {
+                            // Invalid /me command (no arguments)
+                            this.uiController.addCommandError("Error: /me command requires an action.");
+                        }
+                        break;
+                    case 'end':
+                        // Use getActivePeerId() to ensure we're ending the *current* chat
+                        const activePeerIdForEnd = this.getActivePeerId();
+                        if (activePeerIdForEnd === peerId) { // Check if the command is for the active chat
+                            this.endSession(peerId); // Call endSession (which handles UI/reset)
+                        } else if (activePeerIdForEnd) {
+                            this.uiController.addCommandError(`Error: /end can only be used in the active chat (${activePeerIdForEnd}).`);
+                        } else {
+                            this.uiController.addCommandError("Error: No active session to end.");
+                        }
+                        break;
+                    case 'version':
+                        this.uiController.addVersionInfo(config.APP_VERSION);
+                        break;
+                    case 'info':
+                        const activePeerIdForInfo = this.getActivePeerId();
+                        if (activePeerIdForInfo === peerId) { // Check if the command is for the active chat
+                            const httpsUrl = window.location.href;
+                            const wssUrl = this.wsClient.url;
+                            this.uiController.addSessionInfo(httpsUrl, wssUrl, this.identifier, peerId);
+                        } else if (activePeerIdForInfo) {
+                            this.uiController.addCommandError(`Error: /info can only be used in the active chat (${activePeerIdForInfo}).`);
+                        } else {
+                            this.uiController.addCommandError("Error: No active session selected for /info command.");
+                        }
+                        break;
+                    case 'help':
+                        this.uiController.addHelpInfo();
+                        break;
+                    default:
+                        // Unknown command
+                        this.uiController.addCommandError(`Error: Unknown command "/${command}". Type /help for a list of commands.`);
+                        break;
                 }
-            };
-            this.uiController.updateStatus(`Sending message to ${peerId}...`);
-            // Log sending only if DEBUG is enabled.
-            if (config.DEBUG) console.log(`Sending ENCRYPTED_CHAT_MESSAGE (Type 8) to ${peerId}`);
-            // 5. Send the message via WebSocketClient.
-            if (this.wsClient.sendMessage(message)) {
-                messageSent = true;
-                // Add the message to local history immediately.
+            } else {
+                // Regular message (no slash command)
+                payloadToSend = { isAction: false, text: text };
                 session.addMessageToHistory(this.identifier, text, 'own');
-                // If this chat is currently displayed, add the message to the UI.
                 if (this.displayedPeerId === peerId) {
                     this.uiController.addMessage(this.identifier, text, 'own');
                 }
-            } else {
-                 // sendMessage returning false usually indicates connection issue.
-                 // Always log this error.
-                 console.error("sendMessage returned false, connection likely lost.");
-                 // Status might be updated by the WebSocketClient's close handler.
-                 // Provide feedback in the chat window if possible.
-                 if (this.displayedPeerId === peerId) {
-                     this.uiController.addSystemMessage("Error: Failed to send message (connection lost?).");
-                 }
+                localDisplayHandled = true;
             }
+            // --- End Command Parsing Logic ---
+
+            // Only proceed to encrypt and send if payloadToSend is valid
+            if (payloadToSend) {
+                // 1. Encode the payload object to a JSON string, then to UTF-8 ArrayBuffer.
+                const payloadJson = JSON.stringify(payloadToSend);
+                const payloadBuffer = session.cryptoModule.encodeText(payloadJson);
+
+                // 2. Encrypt the payload buffer using the derived AES session key.
+                this.uiController.updateStatus(`Encrypting message to ${peerId}...`);
+                const aesResult = await session.cryptoModule.encryptAES(payloadBuffer);
+                if (!aesResult) throw new Error("AES encryption failed.");
+
+                // 3. Encode the IV and the encrypted data to Base64.
+                const ivBase64 = session.cryptoModule.arrayBufferToBase64(aesResult.iv);
+                const encryptedDataBase64 = session.cryptoModule.arrayBufferToBase64(aesResult.encryptedBuffer);
+
+                // 4. Construct the ENCRYPTED_CHAT_MESSAGE (Type 8) payload.
+                const message = {
+                    type: 8,
+                    payload: {
+                        targetId: peerId,
+                        senderId: this.identifier,
+                        iv: ivBase64,
+                        data: encryptedDataBase64
+                    }
+                };
+                this.uiController.updateStatus(`Sending message to ${peerId}...`);
+                // Log sending only if DEBUG is enabled.
+                if (config.DEBUG) console.log(`Sending ENCRYPTED_CHAT_MESSAGE (Type 8) to ${peerId}`);
+
+                // 5. Send the message via WebSocketClient.
+                if (this.wsClient.sendMessage(message)) {
+                    messageSent = true;
+                    // Local display was already handled above
+                } else {
+                    // sendMessage returning false usually indicates connection issue.
+                    // Always log this error.
+                    console.error("sendMessage returned false, connection likely lost.");
+                    if (this.displayedPeerId === peerId) {
+                        this.uiController.addSystemMessage("Error: Failed to send message (connection lost?).");
+                    }
+                }
+            } else if (!localDisplayHandled) {
+                // This case should ideally not be reached if logic is correct,
+                // but handles scenarios where a command was parsed but resulted in no action/message.
+                // Log this warning only if DEBUG is enabled.
+                if (config.DEBUG) console.log("Command processed locally, nothing sent to peer.");
+            }
+
         } catch (error) {
             // Handle errors during the encryption/sending process.
             // Always log errors.
             console.error("Error during sendEncryptedMessage:", error);
             this.uiController.playSound('error'); // Play error sound
-            // Use addSystemMessage for feedback in the chat window instead of alert
             if (this.displayedPeerId === peerId) {
-                this.uiController.addSystemMessage(`Error sending message: ${error.message}`);
+                // --- UPDATED: Use addCommandError for send errors ---
+                this.uiController.addCommandError(`Error sending message: ${error.message}`);
+                // --- END UPDATE ---
             } else {
-                // If chat not active, maybe alert is okay, or log differently
                 alert(`Error sending message to ${peerId}: ${error.message}`);
             }
         } finally {
@@ -926,6 +1007,7 @@ class SessionManager {
              }
         }
     }
+
 
     /**
      * Ends the chat session with the specified peer from the user's side.
@@ -1446,11 +1528,28 @@ class SessionManager {
                     // If chat not displayed, mark session as having unread messages.
                     this.uiController.setUnreadIndicator(peerId, true);
                 }
-                // Play notification sound for peer messages
+                // Play notification sound ONLY for peer messages (not own or system)
                 if (result.msgType === 'peer') {
                     this.uiController.playSound('notification');
                 }
                 break;
+            // --- Handle display for /me action ---
+            case 'DISPLAY_ME_ACTION':
+                // Clear typing indicator when action message arrives.
+                this.clearTypingIndicatorTimeout(session);
+                if (this.displayedPeerId === peerId) {
+                    this.uiController.hideTypingIndicator();
+                    // Call the new UIController method for /me actions
+                    this.uiController.addMeActionMessage(result.sender, result.text);
+                } else {
+                    // Mark as unread if chat not displayed.
+                    this.uiController.setUnreadIndicator(peerId, true);
+                }
+                // --- ADDED: Play notification sound for /me actions ---
+                this.uiController.playSound('notification');
+                // --- END ADDED ---
+                break;
+            // --- END /me Action Handling ---
             case 'DISPLAY_SYSTEM_MESSAGE':
                  // Display system messages only if the relevant chat is active.
                  if (this.displayedPeerId === peerId) {
@@ -1762,11 +1861,15 @@ class SessionManager {
             session.messages.forEach(msg => {
                 // Check if it's a file transfer message (needs a way to distinguish, maybe msg.isTransfer?)
                 // For now, assume addMessage handles regular text
-                if (msg.type !== 'file') { // Assuming a 'file' type isn't used for history yet
+                // --- UPDATED: Check for action messages in history ---
+                if (msg.type === 'me-action') {
+                    this.uiController.addMeActionMessage(msg.sender, msg.text);
+                } else if (msg.type !== 'file') { // Assuming a 'file' type isn't used for history yet
                      this.uiController.addMessage(msg.sender, msg.text, msg.type);
                 } else {
                     // TODO: Need logic to re-render file transfer messages from history if needed
                 }
+                // --- END UPDATE ---
             });
             // Re-render any active file transfers for this session
             if (session.transferStates) {

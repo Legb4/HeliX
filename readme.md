@@ -25,14 +25,15 @@ HeliX is a browser-based, end-to-end encrypted (E2EE), ephemeral chat system. It
 *   **Perfect Forward Secrecy (PFS):** Uses ephemeral ECDH keys for each session, ensuring that even if long-term keys were compromised (though HeliX doesn't use long-term keys), past session messages cannot be decrypted.
 *   **Ephemeral:** Chat messages exist only in the browser's memory during an active session. They are lost when the session ends, the browser tab is closed, or the server restarts. No message history is stored on the server or persistently on the client.
 *   **Serverless Message Storage:** The Python server only relays data; it does not store message content.
+*   **Secure File Transfer:** Allows sending and receiving files directly between peers within an active chat session. The server cannot decrypt or access file content.
 *   **Simple Identifier System:** Users register with a temporary, unique ID for the duration of their connection to the server. IDs must be shared out-of-band.
 *   **Self-Hosted:** You run the server components yourself, giving you control over the relay infrastructure.
 *   **Customizable Chat Appearance:** Allows users to adjust chat font family and size via a settings menu.
-*   **Basic & Focused:** Designed for simple, secure, temporary peer-to-peer conversations.
+*   **Basic & Focused:** Designed for simple, secure, temporary peer-to-peer conversations and file sharing.
 
 **Target Use Case:**
 
-HeliX is ideal for situations where you need a quick, secure way to chat with someone without relying on third-party services or leaving a persistent message history. Examples include sharing sensitive information temporarily, quick technical support sessions, or private coordination.
+HeliX is ideal for situations where you need a quick, secure way to chat or share files with someone without relying on third-party services or leaving a persistent message history. Examples include sharing sensitive information temporarily, quick technical support sessions, or private coordination.
 
 **Disclaimer:**
 
@@ -45,18 +46,18 @@ HeliX is currently experimental software. While it implements strong E2EE princi
 **High-Level Architecture:**
 
 1.  **Client:** Runs entirely in the user's web browser using HTML, CSS, and JavaScript. It handles:
-    *   User Interface (UI) interactions, including settings and notifications.
+    *   User Interface (UI) interactions, including settings, notifications, etc.
     *   Generating ephemeral cryptographic keys (ECDH and AES) via the browser's Web Crypto API.
     *   Performing key agreement (ECDH) and key derivation (HKDF).
-    *   Encrypting and decrypting messages using the derived session key.
+    *   Encrypting and decrypting messages using the derived session key..
     *   Communicating with the WSS server via Secure WebSockets.
-2.  **HTTPS Server:** A simple Python server (integrated into `helix_manager.py`) serves the static client files (HTML, CSS, JS, audio) to the browser over HTTPS. This is **required** for the Web Crypto API to function securely.
+2.  **HTTPS Server:** A simple Python server (integrated into `helix_manager.py`) serves the static client files (HTML, CSS, JS, audio) to the browser over HTTPS. This is **required** for the Web Crypto API and IndexedDB to function securely.
 3.  **WSS Server:** A Python server using the `websockets` library. It acts as a signaling and relay server:
     *   Manages user registrations (mapping temporary IDs to connections).
     *   Relays handshake messages (public keys, challenges) between clients.
     *   Relays the **encrypted** chat messages between connected peers.
     *   Tracks active session pairings solely for notifying users of peer disconnections.
-    *   **Crucially, the WSS server never sees the plaintext message content or the derived session keys.**
+    *   **Crucially, the WSS server never sees the plaintext message content, derived session keys, or plaintext file content.**
 
 **End-to-End Encryption (E2EE) with Perfect Forward Secrecy (PFS):**
 
@@ -75,16 +76,26 @@ HeliX ensures that only the sender and the intended recipient can read messages,
 4.  **Message Decryption:** The recipient's client:
     *   Uses the derived AES-GCM session key (which they already computed during the handshake) and the received IV to decrypt the actual message data.
 
+**Secure File Transfer:**
+
+*   **Initiation:** Sender clicks the attach button, selects a file, and a request (containing filename, size, type, and a unique transfer ID) is sent to the peer via the relay server.
+*   **Acceptance:** Receiver sees the request and clicks "Accept" or "Reject". Acceptance/rejection is relayed back.
+*   **Chunking & Encryption:** Upon acceptance, the sender's browser reads the file in chunks. Each chunk is encrypted using the *derived AES-GCM session key* and a unique IV.
+*   **Relay:** Encrypted chunks (with IV and chunk index) are sent to the WSS server and relayed to the receiver. The server cannot decrypt the chunks.
+*   **Temporary Storage:** The receiver's browser decrypts each chunk and temporarily stores it in IndexedDB (browser's local database).
+*   **Reassembly & Download:** Once all chunks are received and decrypted, the receiver's browser reassembles them into a Blob. A temporary Blob URL is generated, and a "Download" link appears, allowing the user to save the file. The Blob URL is revoked after clicking or when the session ends/message is removed.
+
 **Ephemeral Nature:**
 
 *   Messages are not stored on the server disk or database.
 *   Messages are not stored persistently in the browser (e.g., in `localStorage`). They only reside in active JavaScript memory.
+*   File chunks are stored *temporarily* in the receiver's browser IndexedDB during transfer and are deleted after successful assembly or if the transfer fails/is cancelled/session ends. The final reassembled file exists only as a Blob until the user explicitly saves it via the download link.
 *   Ephemeral ECDH keys are generated per session and discarded. The derived AES key exists only for the session duration.
-*   Closing the browser tab, ending the session via the "Disconnect" button, or stopping the WSS server will cause the messages and session keys to be lost.
+*   Closing the browser tab, ending the session via the "Disconnect" button, or stopping the WSS server will cause the messages, session keys, and any incomplete file transfer data to be lost.
 
 **HTTPS Importance:**
 
-Modern web browsers require a secure context (HTTPS or `localhost`) to grant access to the Web Crypto API, which HeliX relies on for all its cryptographic operations. The integrated HTTPS server provides this secure context. We use `mkcert` to easily generate locally-trusted TLS certificates for development and local network use.
+Modern web browsers require a secure context (HTTPS or `localhost`) to grant access to the Web Crypto API (used for encryption) and IndexedDB (used for file transfer storage). The integrated HTTPS server provides this secure context. We use `mkcert` to easily generate locally-trusted TLS certificates for development and local network use.
 
 **Identifier System:**
 
@@ -96,14 +107,14 @@ HeliX uses simple, temporary identifiers chosen by the user upon connecting.
 
 **Security Considerations & Assumptions:**
 
-*   **Server Trust:** You must trust the machine running the WSS and HTTPS servers. While the server cannot read messages, a compromised server could potentially interfere with connections or attempt more advanced attacks (though TLS and E2EE mitigate many risks).
+*   **Server Trust:** You must trust the machine running the WSS and HTTPS servers. While the server cannot read messages or files, a compromised server could potentially interfere with connections or attempt more advanced attacks (though TLS and E2EE mitigate many risks).
 *   **Client Trust:** Communication is only as secure as the endpoint devices. If a user's computer or browser is compromised, the E2EE can be bypassed locally.
 *   **`mkcert` CA Trust:** For browsers to accept the HTTPS connection without warnings, the `mkcert` local Certificate Authority (CA) must be installed and trusted by your operating system/browser. The manager script offers to run `mkcert -install`, but this requires user confirmation and potentially administrator privileges. Accessing the client via an IP address or hostname not listed in the certificate (`localhost`, `127.0.0.1`) *will* result in browser warnings, even if the CA is installed. Trusting this CA is a security consideration.
 *   **Identifier Exchange:** The security of initiating a conversation depends on how securely you exchange identifiers with your peer.
-*   **Metadata Protection:** The server knows *who* is registered (`identifier` -> `connection`) and relays messages between peers based on `targetId`.
+*   **Metadata Protection:** The server knows *who* is registered (`identifier` -> `connection`) and relays messages (including handshake, chat, and file transfer control messages) between peers based on `targetId`.
     *   **Disconnect Notifications:** To provide timely notifications when a chat partner disconnects, the server temporarily tracks active session pairings (e.g., `Alice123` <-> `Bob456`). This pairing information exists only while the session is considered active by the server and is deleted when a user disconnects or explicitly ends the session.
-    *   **Implication:** This increases the *metadata* stored on the server. If the server is compromised, an attacker could gain a clearer real-time view of *who is actively chatting with whom*. This **does not** compromise the end-to-end encryption of the message *content*, which remains unreadable by the server.
-*   **Perfect Forward Secrecy:** HeliX implements PFS using ephemeral ECDH keys for each session. This means that even if an attacker could somehow compromise keys used in one session, they could not use that information to decrypt messages from *past* sessions.
+    *   **Implication:** This increases the *metadata* stored on the server. If the server is compromised, an attacker could gain a clearer real-time view of *who is actively chatting with whom* and potentially infer file transfer activity (though not content). This **does not** compromise the end-to-end encryption of the message or file *content*, which remains unreadable by the server.
+*   **Perfect Forward Secrecy:** HeliX implements PFS using ephemeral ECDH keys for each session. This means that even if an attacker could somehow compromise keys used in one session, they could not use that information to decrypt messages or files from *past* sessions.
 
 ---
 
@@ -117,7 +128,7 @@ Before setting up HeliX, ensure you have the following:
 *   **`mkcert` Utility:** A tool for creating locally-trusted development certificates.
     *   Download from the [mkcert GitHub Releases page](https://github.com/FiloSottile/mkcert/releases).
     *   Follow the specific setup instructions in the "Installation & Setup" section below *before* running the HeliX manager's certificate option.
-*   **Modern Web Browser:** Firefox, Chrome, Edge, or Safari recommended (supporting Web Crypto API and WebSockets).
+*   **Modern Web Browser:** Firefox, Chrome, Edge, or Safari recommended (supporting Web Crypto API, WebSockets, and IndexedDB).
 
 ---
 
@@ -260,9 +271,26 @@ Before setting up HeliX, ensure you have the following:
 7.  **Starting a Chat:** Enter your peer's ID in the sidebar input field and click "Start Chat".
 8.  **Receiving a Chat Request:** If someone requests a chat with you, click "Accept" or "Deny".
 9.  **Active Chatting:** Once a session is established, type messages in the input field at the bottom of the chat view and press Enter or click "Send".
-10. **Ending a Session:** Click the "Disconnect" button in the chat header.
-11. **Switching Between Sessions:** Click peer IDs in the sidebar list to switch between active or pending sessions.
-12. **Understanding Info Panes:** Read messages about errors, denials, or timeouts that appear in the main content area.
+10. **Slash Commands:** Type the following commands into the message input field during an active chat session:
+    *   `/me <action text>`: Displays "* YourID action text" to both users (e.g., `/me waves`).
+    *   `/end`: Ends the current chat session (same as clicking the "End Session" button).
+    *   `/version`: Displays the HeliX client version information in your chat window.
+    *   `/info`: Displays information about the current connection and session in your chat window.
+    *   `/help`: Displays this list of available commands in your chat window.
+11. **Sending a File:**
+    *   During an active chat, click the paperclip (📎) button next to the message input field.
+    *   Select the file you wish to send using your system's file browser.
+    *   A file transfer request message will appear in the chat for both users.
+    *   The sender will see progress updates and a "Cancel" button.
+    *   The receiver will see "Accept" and "Reject" buttons.
+    *   **Note:** There is a file size limit (default 100 MB, configurable).
+12. **Receiving a File:**
+    *   When a peer sends a file request, click "Accept" to start the transfer or "Reject" to deny it.
+    *   If accepted, you will see progress updates.
+    *   Once the transfer is complete, a "Download" link will appear. Click it to save the file to your computer.
+13. **Ending a Session:** Click the "Disconnect" button in the chat header or use the `/end` command.
+14. **Switching Between Sessions:** Click peer IDs in the sidebar list to switch between active or pending sessions.
+15. **Understanding Info Panes:** Read messages about errors, denials, or timeouts that appear in the main content area.
 
 ---
 
@@ -286,6 +314,15 @@ Before setting up HeliX, ensure you have the following:
 *   **Port Conflict ("Address already in use"):** Stop the other application or configure HeliX to use different ports via the manager menu (Options 1-4).
 *   **Handshake Timeout:** If the connection hangs during initiation, check console logs on both clients (enable Client Debug via manager option 6) and the server (enable Server Debug via manager option 5) for errors. Network latency or firewall issues could interfere. An error sound may play.
 *   **Disconnected by Server (Rate Limit):** If you see an alert about being disconnected for exceeding the rate limit, you sent too many messages too quickly. Wait a moment and reconnect. An error sound will play.
+*   **File Transfer Fails:**
+    *   **Size Limit:** Ensure the file does not exceed the configured maximum size (default 100 MB).
+    *   **Peer Disconnects:** If the peer disconnects during the transfer, it will fail.
+    *   **Network Issues:** Unstable connections can cause chunk transfer failures.
+    *   **Browser Storage:** The receiver needs sufficient temporary storage space (IndexedDB). Check browser settings or clear site data if issues persist. Errors during chunk storage or reassembly will be reported.
+    *   **Console Logs:** Check browser console (F12) on both sender and receiver for specific error messages related to encryption, IndexedDB, or network sends/receives.
+*   **File Download Link Doesn't Work:**
+    *   The temporary Blob URL might have expired or been revoked (e.g., if the session ended or the message was removed before clicking). Try having the sender resend the file.
+    *   Check browser console for errors related to Blob URLs or downloads.
 *   **No Sound Playing:**
     *   Check if sounds are muted using the mute button (🔇) in the sidebar.
     *   Ensure your system/browser volume is not muted or too low.
