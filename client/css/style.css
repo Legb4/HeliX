@@ -33,7 +33,7 @@
     --text-light: #cccccc;              /* Primary light text color */
     --text-light-strong: #d4d4d4;       /* Slightly stronger light text color */
     --text-secondary: #a0a0a0;          /* Secondary text color (for labels, timestamps, status) */
-    --text-link: #4dabf7;               /* Link color (used for download link) */
+    --text-link: #4dabf7;               /* Link color (used for download link, message links) */
     --text-sender-peer: #ce9178;        /* Color for peer's sender name */
     --text-sender-own: #9cdcfe;         /* Color for own sender name */
     --text-sender-system: #dcdcaa;      /* Color for system message sender/prefix */
@@ -392,7 +392,7 @@ body {
     font-weight: 300; /* Lighter font weight */
     font-size: 1.8em; /* Larger font size */
 }
-/* --- NEW: Version Display Styling --- */
+/* --- Version Display Styling --- */
 #app-version-display {
     font-size: 0.85em; /* Smaller font size */
     color: var(--accent-blue); /* Blue accent color */
@@ -400,7 +400,7 @@ body {
     margin-bottom: 25px; /* Space below version */
     /* Inherits text-align: center */
 }
-/* --- END NEW --- */
+/* --- End Version Display Styling --- */
 /* Styles paragraphs within the welcome message. */
 #welcome-message p {
     margin-bottom: 15px; /* Space below paragraphs */
@@ -614,6 +614,18 @@ body {
     display: inline; /* Keep on the same line as sender */
     color: var(--text-light); /* Default light text color */
 }
+
+/* --- NEW: Link Styling within Messages --- */
+/* Styles anchor tags specifically within the message text span */
+.message-text a {
+    color: var(--text-link); /* Use the defined link color */
+    text-decoration: underline; /* Add underline for clarity */
+    word-break: break-all; /* Allow long URLs to break anywhere */
+}
+.message-text a:hover {
+    text-decoration: none; /* Optional: Remove underline on hover */
+}
+/* --- END NEW --- */
 
 /* --- /me Action Message Styling --- */
 /* Styles the container for a /me action message. */

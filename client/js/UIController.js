@@ -5,7 +5,7 @@
  * This class is responsible for getting references to UI elements,
  * showing/hiding different sections of the application, updating text content,
  * enabling/disabling controls, adding/removing items from lists,
- * displaying messages (including file transfers and actions), playing sounds, managing settings UI,
+ * displaying messages (including file transfers, actions, and clickable links), playing sounds, managing settings UI,
  * and binding event listeners to UI elements.
  * It acts as the presentation layer, controlled by the SessionManager.
  */
@@ -46,7 +46,7 @@ class UIController {
         this.overlay = document.getElementById('overlay'); // Reference to the overlay div
         this.welcomeMessage = document.getElementById('welcome-message'); // Default welcome view
         this.myIdentifierWelcome = document.getElementById('my-identifier-welcome'); // User's ID display in welcome message
-        this.appVersionDisplay = document.getElementById('app-version-display'); // NEW: Version display element
+        this.appVersionDisplay = document.getElementById('app-version-display'); // Version display element
         this.incomingRequestArea = document.getElementById('incoming-request-area'); // View for incoming requests
         this.incomingRequestText = document.getElementById('incoming-request-text'); // Text within incoming request view
         this.acceptButton = document.getElementById('accept-button'); // Accept button
@@ -68,7 +68,7 @@ class UIController {
         this.typingIndicatorText = document.getElementById('typing-indicator-text'); // The text span for "is typing..."
 
         this.messageInputArea = document.getElementById('message-input-area'); // Container for input and send button
-        this.attachButton = document.getElementById('attach-button'); // NEW: Attach button reference
+        this.attachButton = document.getElementById('attach-button'); // Attach button reference
         this.messageInput = document.getElementById('message-input'); // The message text input field
         this.sendButton = document.getElementById('send-button'); // Send message button
         this.disconnectButton = document.getElementById('disconnect-button'); // Disconnect button in chat header
@@ -80,7 +80,7 @@ class UIController {
         this.closeSettingsButton = document.getElementById('close-settings-button');
 
         // File Input Element (Hidden)
-        this.fileInput = document.getElementById('file-input'); // NEW: Hidden file input reference
+        this.fileInput = document.getElementById('file-input'); // Hidden file input reference
 
         // --- Audio Management ---
         // Object to hold preloaded Audio elements.
@@ -94,7 +94,6 @@ class UIController {
             'registered': 'audio/registered.mp3',
             'receiverequest': 'audio/receiverequest.mp3',
             'sendrequest': 'audio/sendrequest.mp3',
-            // NEW: Add sounds for file transfer
             'file_request': 'audio/receiverequest.mp3', // Reuse request sound
             'file_complete': 'audio/begin.mp3',        // Reuse begin sound
             'file_error': 'audio/error.mp3'            // Reuse error sound
@@ -204,13 +203,13 @@ class UIController {
         if (this.appContainer) this.appContainer.style.display = 'flex'; // Show the main layout
         if (this.myIdentifierDisplay) this.myIdentifierDisplay.textContent = myId; // Show ID in sidebar
         if (this.myIdentifierWelcome) this.myIdentifierWelcome.textContent = myId; // Show ID in welcome message
-        // --- NEW: Set Version Display ---
+        // --- Set Version Display ---
         if (this.appVersionDisplay && config && config.APP_VERSION) {
             this.appVersionDisplay.textContent = `Version: ${config.APP_VERSION}`;
         } else if (this.appVersionDisplay) {
             this.appVersionDisplay.textContent = 'Version: Unknown'; // Fallback
         }
-        // --- END NEW ---
+        // --- END ---
         this.showWelcomeMessage(); // Show the default pane
         this.setRegistrationControlsEnabled(false); // Disable registration controls
     }
@@ -626,6 +625,7 @@ class UIController {
     /**
      * Adds a message (peer, own, or system) to the message display area.
      * Includes timestamp and sender information. Scrolls to bottom if already scrolled down.
+     * Calls helper to linkify URLs within the message text.
      * @param {string} sender - Identifier of the sender ('System', own ID, or peer ID).
      * @param {string} text - The message content.
      * @param {string} [type='peer'] - Type of message ('peer', 'own', 'system').
@@ -668,7 +668,16 @@ class UIController {
         // Message Text
         const textSpan = document.createElement('span');
         textSpan.className = 'message-text';
-        textSpan.textContent = ` ${text}`; // Add leading space for separation
+        // Create a text node with the message content
+        const textNode = document.createTextNode(` ${text}`); // Add leading space for separation
+        textSpan.appendChild(textNode);
+
+        // --- NEW: Linkify URLs in regular messages ---
+        // Only linkify for 'peer' and 'own' message types
+        if (type === 'peer' || type === 'own') {
+            this._linkifyTextNode(textNode);
+        }
+        // --- END NEW ---
 
         // Append elements to message container
         messageDiv.appendChild(timestampSpan);
@@ -693,6 +702,7 @@ class UIController {
     /**
      * Adds a '/me' action message to the message display area.
      * Formats as '* Sender actionText'. Includes timestamp. Scrolls to bottom.
+     * Does NOT linkify URLs within action messages.
      * @param {string} sender - Identifier of the user performing the action.
      * @param {string} actionText - The text of the action (what follows /me).
      */
@@ -805,6 +815,7 @@ class UIController {
                          `Server URL: ${wssUrl}\n` +
                          `Your ID: ${myId}\n` +
                          `Peer ID: ${peerId}\n` +
+                         `Current Time: ${dateTimeString}\n` +
                          `--------------------`;
 
         // Split the string by newline and add each line as a system message
@@ -1463,6 +1474,67 @@ class UIController {
         }
     }
     // -----------------------------
+
+    // --- NEW: Linkify Helper ---
+    /**
+     * Finds URLs within a given text node and replaces them with clickable links.
+     * Modifies the DOM by replacing the text node with a fragment containing text nodes and <a> elements.
+     * @param {Node} textNode - The text node to process.
+     * @private
+     */
+    _linkifyTextNode(textNode) {
+        const urlRegex = /(\b(?:https?|ftp):\/\/[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])|(\bwww\.[-A-Z0-9+&@#\/%?=~_|!:,.;]*[-A-Z0-9+&@#\/%=~_|])/ig;
+        const textContent = textNode.textContent;
+        let match;
+        let lastIndex = 0;
+        const fragment = document.createDocumentFragment();
+        let foundLink = false; // Flag to track if any links were found
+
+        // Use regex.exec in a loop to find all matches
+        while ((match = urlRegex.exec(textContent)) !== null) {
+            foundLink = true;
+            const url = match[0]; // The matched URL string
+            const index = match.index; // Starting index of the URL in the text
+
+            // Append text before the URL (if any)
+            if (index > lastIndex) {
+                fragment.appendChild(document.createTextNode(textContent.substring(lastIndex, index)));
+            }
+
+            // Create and append the link element
+            const link = document.createElement('a');
+            let href = url;
+            // Prepend https:// if URL starts with www. but not a protocol
+            if (match[2]) { // match[2] captures URLs starting with www.
+                href = `https://${url}`;
+            }
+            link.href = href;
+            link.target = '_blank'; // Open in new tab
+            link.rel = 'noopener noreferrer'; // Security measure
+            link.textContent = url; // Display the original URL text
+            fragment.appendChild(link);
+
+            // Update the index for the next segment
+            lastIndex = urlRegex.lastIndex;
+        }
+
+        // If no links were found, do nothing
+        if (!foundLink) {
+            return;
+        }
+
+        // Append any remaining text after the last URL
+        if (lastIndex < textContent.length) {
+            fragment.appendChild(document.createTextNode(textContent.substring(lastIndex)));
+        }
+
+        // Replace the original text node with the new fragment containing links and text nodes
+        textNode.parentNode.replaceChild(fragment, textNode);
+        // Log linkification only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Linkified URLs in message text.");
+    }
+    // --- END NEW ---
+
 
     // --- Utility ---
     /**
