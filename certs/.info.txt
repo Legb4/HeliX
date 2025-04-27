@@ -1,0 +1,2 @@
+Certifificate files are stored here.
+For Windows, you may optionally download mkcert-vX.Y.Z-windows-amd64.exe, rename it to mkcert.exe, and place it in this directory.

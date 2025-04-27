@@ -150,7 +150,7 @@ Before setting up HeliX, ensure you have the following:
     ├── readme.md              # This file
     │
     ├── certs/                 # Directory for TLS certificates
-    │   └── mkcert.exe         # (Windows Only, Optional) Place downloaded mkcert here if not in PATH
+    │   └── .info.txt          # Placeholder file
     │
     ├── client/                # Contains all client-side browser code
     │   ├── index.html         # Main HTML file for the client interface
@@ -174,6 +174,9 @@ Before setting up HeliX, ensure you have the following:
     │       ├── UIController.js    # Handles updates to the HTML user interface
     │       └── WebSocketClient.js # Manages the WebSocket connection and message handling
     │
+    └── logs/                  # Contains HTTPS server logs
+    │   └── .info.txt          # Placeholder file
+    |
     └── server/                # Contains all server-side Python code
         ├── config.py          # Server configuration (WSS/HTTPS Host/Port, DEBUG flag)
         ├── main.py            # Entry point for the WSS server process
