@@ -1,4 +1,4 @@
-# HeliX Chat
+# HeliX Chat (v0.1 beta test)
 
 **Table of Contents**
 

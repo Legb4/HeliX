@@ -1,1 +1,2 @@
-Log files are stored here.
+This is a placeholder file
+HTTPS server log files are stored in this directory as https_server.log
