@@ -25,6 +25,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # - Contains only letters, numbers, underscores, hyphens ([a-zA-Z0-9_-]*)
 # - Is between 3 and 30 characters long ({2,29}$) - Note: {2,29} because the first char is already matched.
 VALID_IDENTIFIER_REGEX = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{2,29}$")
+# Regex pattern for basic Base64 character validation (A-Z, a-z, 0-9, +, /, =)
+BASE64_CHARS_REGEX = re.compile(r"^[A-Za-z0-9+/=]+$") # Added for specific chunk data validation
 
 # --- Global Registries ---
 
@@ -301,7 +303,8 @@ async def connection_handler(websocket):
                 def is_valid_base64_like(value, max_len=1024*128): # Default max length from Session.js
                     # Basic check: is string, not empty, within length limit, contains only valid chars
                     # This is NOT a full Base64 validation but catches many obvious errors.
-                    return isinstance(value, str) and 0 < len(value) <= max_len and re.match(r"^[A-Za-z0-9+/=]+$", value)
+                    # Use BASE64_CHARS_REGEX defined globally
+                    return isinstance(value, str) and 0 < len(value) <= max_len and BASE64_CHARS_REGEX.match(value)
 
                 # --- Message Type Specific Validation ---
                 if message_type == 0: # Registration
@@ -350,7 +353,7 @@ async def connection_handler(websocket):
                     elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
                     if not validation_passed: logging.warning(f"Invalid Type 8 payload from {websocket.remote_address}. Ignoring.")
 
-                # --- NEW: File Transfer Validation ---
+                # --- File Transfer Validation ---
                 elif message_type == 12: # FILE_TRANSFER_REQUEST
                     if not is_valid_string(target_id): validation_passed = False
                     elif not is_valid_string(payload.get("transferId"), 64): validation_passed = False # UUID length + buffer
@@ -372,14 +375,20 @@ async def connection_handler(websocket):
                     if not validation_passed: logging.warning(f"Invalid Type {message_type} payload from {websocket.remote_address}. Ignoring.")
 
                 elif message_type == 15: # FILE_CHUNK
+                    chunk_data = payload.get("data") # Get the data field
                     if not is_valid_string(target_id): validation_passed = False
                     elif not is_valid_string(payload.get("transferId"), 64): validation_passed = False
                     elif not isinstance(payload.get("chunkIndex"), int) or payload.get("chunkIndex") < 0: validation_passed = False
                     elif not is_valid_base64_like(payload.get("iv"), 32): validation_passed = False
-                    # Data length check relies on WebSocket max_size setting
-                    elif not is_valid_base64_like(payload.get("data")): validation_passed = False
+                    # --- MODIFIED VALIDATION FOR CHUNK DATA ---
+                    # Check only for presence, string type, non-empty, and valid Base64 characters.
+                    # Length is handled by the WebSocket max_size setting.
+                    elif not isinstance(chunk_data, str) or len(chunk_data) == 0 or not BASE64_CHARS_REGEX.match(chunk_data):
+                        logging.warning(f"Invalid 'data' field (type, empty, or invalid chars) in Type 15 payload from {websocket.remote_address}. Ignoring.")
+                        validation_passed = False
+                    # --- END MODIFICATION ---
                     elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
-                    if not validation_passed: logging.warning(f"Invalid Type 15 payload from {websocket.remote_address}. Ignoring.")
+                    # Removed redundant logging check here, main check below covers it.
 
                 elif message_type == 17: # FILE_TRANSFER_ERROR
                     if not is_valid_string(target_id): validation_passed = False
@@ -391,6 +400,9 @@ async def connection_handler(websocket):
                 # --- End File Transfer Validation ---
 
                 if not validation_passed:
+                    # Log the specific failure reason if not already logged above
+                    if message_type != 0 and message_type != 15: # Avoid double logging for reg/chunk
+                         logging.warning(f"Invalid Type {message_type} payload from {websocket.remote_address}. Ignoring.")
                     continue # Skip processing this invalid message
 
                 # --- Message Routing (Post-Validation) ---
@@ -544,8 +556,8 @@ async def start_server(host, port):
     # Define the maximum message size (e.g., 1MB = 1024 * 1024 bytes)
     # This value could potentially be moved to config.py if desired
     # Increase max size slightly to accommodate chunk overhead (IV, index, etc.) + chunk size
-    # Example: 256KB chunk + ~1KB overhead -> ~257KB. Let's set to 300KB for buffer.
-    MAX_MESSAGE_SIZE = 300 * 1024 # Adjust as needed based on CHUNK_SIZE + overhead
+    # Example: 256KB chunk + ~1KB overhead -> ~257KB. Let's set to 512KB for buffer.
+    MAX_MESSAGE_SIZE = 512 * 1024 # Adjust as needed based on CHUNK_SIZE + overhead
     logging.info(f"Maximum WebSocket message size: {MAX_MESSAGE_SIZE} bytes") # Log the max size being used
     # Log debug status
     logging.info(f"Server Debug Logging: {'ENABLED' if config.DEBUG else 'DISABLED'}")
