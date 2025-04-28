@@ -4,15 +4,14 @@
  * Manages the WebSocket connection to the server.
  * Handles connecting, sending messages, receiving messages,
  * monitoring connection status, and implementing automatic reconnection logic.
+ * Dynamically determines the WebSocket URL based on the current hostname and configured port.
  */
 class WebSocketClient {
     /**
      * Creates a new WebSocketClient instance.
-     * @param {string} url - The WebSocket server URL (e.g., 'wss://localhost:5678').
+     * Note: The URL is now determined dynamically in the connect() method.
      */
-    constructor(url) {
-        // The target WebSocket server URL.
-        this.url = url;
+    constructor() {
         // Holds the WebSocket object instance when connected. Null otherwise.
         this.websocket = null;
         // Callback function to handle incoming messages. Set via setMessageListener.
@@ -33,10 +32,14 @@ class WebSocketClient {
         // Stores the timeout ID for the scheduled reconnect attempt. Null if no reconnect is scheduled.
         this.reconnectTimeoutId = null;
         // --------------------------
+
+        // Bind handlers once in the constructor
+        this.bindHandlers();
     }
 
     /**
-     * Initiates a WebSocket connection attempt to the configured URL.
+     * Initiates a WebSocket connection attempt.
+     * Dynamically constructs the URL using the current page hostname and the port from config.js.
      * Handles closing existing connections and manages initial state for reconnection logic.
      * @param {boolean} [isReconnectAttempt=false] - Internal flag set to true when called during the reconnect sequence.
      */
@@ -44,9 +47,16 @@ class WebSocketClient {
         // Clear any previously scheduled reconnect attempt.
         this.clearReconnectTimeout();
 
+        // --- Dynamically Construct WebSocket URL ---
+        // Use 'wss://' protocol (required for Web Crypto API).
+        // Use window.location.hostname to get the hostname the user accessed the page with (e.g., localhost, 192.168.x.x).
+        // Use config.webSocketPort (read from client/js/config.js, updated by manager) for the port.
+        const dynamicUrl = `wss://${window.location.hostname}:${config.webSocketPort}`;
+        // --- End Dynamic URL Construction ---
+
         // Log connection attempt only if DEBUG is enabled.
         if (config.DEBUG) {
-            console.log(`Attempting to connect to WebSocket server at ${this.url}... (Reconnect: ${isReconnectAttempt})`);
+            console.log(`Attempting to connect to WebSocket server at ${dynamicUrl}... (Reconnect: ${isReconnectAttempt})`);
         }
 
         // If this is a fresh connection attempt (not a reconnect), reset state.
@@ -70,17 +80,15 @@ class WebSocketClient {
         }
 
         try {
-            // Create the new WebSocket object. This initiates the connection attempt.
-            this.websocket = new WebSocket(this.url);
-            // Ensure event handlers have the correct 'this' context.
-            this.bindHandlers();
+            // Create the new WebSocket object using the dynamically constructed URL.
+            this.websocket = new WebSocket(dynamicUrl);
             // Attach the event listeners ('open', 'message', 'error', 'close') to the new socket.
-            this.addListeners();
+            this.addListeners(); // Handlers are already bound in constructor
 
         } catch (error) {
-            // Catch errors during WebSocket object creation (e.g., invalid URL format).
+            // Catch errors during WebSocket object creation (e.g., invalid URL format - less likely now).
             // Always log these errors.
-            console.error("Error creating WebSocket connection:", error);
+            console.error(`Error creating WebSocket connection to ${dynamicUrl}:`, error);
             this.updateStatus('Failed to connect (Initialization Error)');
             this.websocket = null; // Ensure websocket is null on failure.
             // Reset connection state fully if creation failed.
@@ -94,7 +102,7 @@ class WebSocketClient {
     /**
      * Binds the 'this' context to the event handler methods.
      * This ensures that 'this' refers to the WebSocketClient instance
-     * when the handlers are called by the WebSocket object. Called once.
+     * when the handlers are called by the WebSocket object. Called once in constructor.
      */
     bindHandlers() {
         this.handleOpen = this.handleOpen.bind(this);
@@ -143,7 +151,9 @@ class WebSocketClient {
      */
     handleOpen(event) {
         // Log connection established (not wrapped in DEBUG as it's significant).
-        console.log('WebSocket connection established.');
+        // Log the actual URL used for the connection.
+        const connectedUrl = event.target?.url || this.websocket?.url || 'N/A';
+        console.log(`WebSocket connection established to ${connectedUrl}.`);
         this.wasConnected = true; // Mark that we successfully connected at least once.
         this.reconnectAttempts = 0; // Reset reconnect counter on successful connection.
         this.clearReconnectTimeout(); // Clear any pending reconnect attempts.
@@ -173,7 +183,8 @@ class WebSocketClient {
     handleError(event) {
         // Log the error event for debugging. Detailed handling is often done in handleClose.
         // Always log WebSocket errors.
-        console.error('WebSocket error observed:', event);
+        const targetUrl = event.target?.url || this.websocket?.url || 'N/A';
+        console.error(`WebSocket error observed for connection to ${targetUrl}:`, event);
         // Potential enhancement: Update status based on specific error types if possible.
     }
 
@@ -185,7 +196,8 @@ class WebSocketClient {
      */
     handleClose(event) {
         // Log closure details (not wrapped in DEBUG as it's significant).
-        console.log(`WebSocket connection closed. Code: ${event.code}, Reason: "${event.reason}", Clean: ${event.wasClean}`);
+        const targetUrl = event.target?.url || 'N/A'; // Get URL from event if possible
+        console.log(`WebSocket connection to ${targetUrl} closed. Code: ${event.code}, Reason: "${event.reason}", Clean: ${event.wasClean}`);
 
         // Determine if the close was unexpected (abnormal).
         // !event.wasClean is the primary indicator. Code 1006 is a common abnormal close code.
@@ -220,11 +232,11 @@ class WebSocketClient {
                 statusMessage = "Disconnected (Client navigating away)";
             } else if (event.code === 1006 && !this.wasConnected) {
                 // Abnormal close (1006) *and* we never successfully connected in the first place.
-                // Likely indicates the server was unreachable.
-                statusMessage = "Connection Failed (Server Unreachable?)";
+                // Likely indicates the server was unreachable or refused connection.
+                statusMessage = `Connection Failed (Server at ${targetUrl} Unreachable/Refused?)`;
             } else if (event.code === 1015) {
                  // TLS handshake failure (SSL/TLS error).
-                 statusMessage = "Connection Failed (TLS/SSL Error)";
+                 statusMessage = `Connection Failed (TLS/SSL Error to ${targetUrl})`;
             } else if (abnormalClose && this.wasConnected) {
                  // Abnormal close after having been connected, but retries are exhausted or not applicable.
                  statusMessage = "Connection Lost";

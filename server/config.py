@@ -11,7 +11,7 @@ import os # Import the 'os' module to help construct file paths reliably.
 HOST = '0.0.0.0'
 
 # The port number the WebSocket server should listen on.
-# This must match the port specified in the client's 'config.js' (webSocketUrl).
+# This must match the port specified in the client's 'config.js' (webSocketPort).
 PORT = 5678
 
 # --- SSL Configuration ---

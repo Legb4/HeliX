@@ -9,12 +9,12 @@
 #   - Generates/overwrites local TLS certificates (cert.pem, key.pem) for localhost/127.0.0.1.
 #   - Offers to back up existing certificates before overwriting.
 # - Allows viewing and modifying configuration settings:
-#   - WSS Host/Port (Saved to server/config.py)
+#   - WSS Host/Port (Saved to server/config.py AND client/js/config.js for Port)
 #   - HTTPS Host/Port (Manager session only)
 #   - Server Debug Mode (Saved to server/config.py)
 #   - Client Debug Mode (Saved to client/js/config.js)
 # - Saves WSS config (HOST, PORT, DEBUG) persistently to server/config.py before starting.
-# - Saves Client config (DEBUG) persistently to client/js/config.js before starting.
+# - Saves Client config (DEBUG, WSS_PORT) persistently to client/js/config.js before starting. # MODIFIED
 # - Starts both the WebSocket Secure (WSS) server (as a subprocess) and
 #   an integrated HTTPS server (in a separate thread) to serve client files.
 #   (Requires certificates to exist before starting).
@@ -274,8 +274,9 @@ def generate_certificates():
 def read_config():
     """
     Reads WSS settings (HOST, PORT, DEBUG) from server/config.py and
-    Client DEBUG setting from client/js/config.js using regex.
+    Client settings (DEBUG, WSS_PORT) from client/js/config.js using regex.
     Sets default values internally if files or settings are not found.
+    Prioritizes client/js/config.js for WSS_PORT if found.
 
     Returns:
         dict: A dictionary containing the configuration settings:
@@ -285,7 +286,7 @@ def read_config():
     # Initialize settings with default values.
     settings = {
         'wss_host': '0.0.0.0',
-        'wss_port': 5678,
+        'wss_port': 5678,       # Default WSS port
         'https_host': '0.0.0.0', # Default HTTPS host (not read from file)
         'https_port': 8888,     # Default HTTPS port (not read from file)
         'server_debug': False,  # Default server debug mode
@@ -293,34 +294,9 @@ def read_config():
     }
     server_config_path = CONFIG_FILE_PATH
     client_config_path = CLIENT_CONFIG_FILE_PATH
+    wss_port_from_client = None # Variable to store port read from client config
 
-    # --- Read Server Config (server/config.py) ---
-    try:
-        # print(f"Reading WSS configuration from: {server_config_path}") # Silent read
-        with open(server_config_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-
-            # WSS Host
-            wss_host_match = re.search(r"^HOST\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
-            if wss_host_match: settings['wss_host'] = wss_host_match.group(1)
-            else: print(f"Warning: Could not find WSS HOST setting in {server_config_path}, using default '{settings['wss_host']}'.")
-
-            # WSS Port
-            wss_port_match = re.search(r"^PORT\s*=\s*(\d+)", content, re.MULTILINE)
-            if wss_port_match: settings['wss_port'] = int(wss_port_match.group(1))
-            else: print(f"Warning: Could not find WSS PORT setting in {server_config_path}, using default {settings['wss_port']}.")
-
-            # Server Debug
-            server_debug_match = re.search(r"^DEBUG\s*=\s*(True|False)", content, re.MULTILINE)
-            if server_debug_match:
-                # Convert Python boolean string to actual boolean
-                settings['server_debug'] = server_debug_match.group(1) == 'True'
-            else: print(f"Warning: Could not find DEBUG setting in {server_config_path}, using default {settings['server_debug']}.")
-
-    except FileNotFoundError: print(f"Warning: {server_config_path} not found. Using default settings for WSS.")
-    except Exception as e: print(f"Warning: Error reading {server_config_path}: {e}. Using default settings for WSS.")
-
-    # --- Read Client Config (client/js/config.js) ---
+    # --- Read Client Config (client/js/config.js) FIRST for WSS Port ---
     try:
         # print(f"Reading Client configuration from: {client_config_path}") # Silent read
         with open(client_config_path, 'r', encoding='utf-8') as f:
@@ -334,9 +310,53 @@ def read_config():
                 settings['client_debug'] = client_debug_match.group(1).lower() == 'true'
             else: print(f"Warning: Could not find DEBUG setting in {client_config_path}, using default {settings['client_debug']}.")
 
-    except FileNotFoundError: print(f"Warning: {client_config_path} not found. Using default setting for Client DEBUG.")
-    except Exception as e: print(f"Warning: Error reading {client_config_path}: {e}. Using default setting for Client DEBUG.")
+            # NEW: Read WSS Port from client config
+            # Look for 'webSocketPort: 5678,' or 'webSocketPort = 5678;'
+            client_port_match = re.search(r"^\s*webSocketPort\s*[:=]\s*(\d+)\s*,?;?", content, re.MULTILINE | re.IGNORECASE)
+            if client_port_match:
+                try:
+                    wss_port_from_client = int(client_port_match.group(1))
+                    # Apply the client port immediately if found
+                    settings['wss_port'] = wss_port_from_client
+                    print(f"Info: Found WSS Port {wss_port_from_client} in {client_config_path}.")
+                except ValueError:
+                    print(f"Warning: Invalid WSS Port value found in {client_config_path}, ignoring.")
+            else: print(f"Info: Could not find webSocketPort setting in {client_config_path}, will use server config or default.")
 
+    except FileNotFoundError: print(f"Warning: {client_config_path} not found. Using default settings for Client.")
+    except Exception as e: print(f"Warning: Error reading {client_config_path}: {e}. Using default settings for Client.")
+
+    # --- Read Server Config (server/config.py) ---
+    # Read server config, but WSS Port from client config takes precedence if found
+    try:
+        # print(f"Reading WSS configuration from: {server_config_path}") # Silent read
+        with open(server_config_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+            # WSS Host
+            wss_host_match = re.search(r"^HOST\s*=\s*['\"]([^'\"]+)['\"]", content, re.MULTILINE)
+            if wss_host_match: settings['wss_host'] = wss_host_match.group(1)
+            else: print(f"Warning: Could not find WSS HOST setting in {server_config_path}, using default '{settings['wss_host']}'.")
+
+            # WSS Port (Only use if not found in client config)
+            if wss_port_from_client is None:
+                wss_port_match = re.search(r"^PORT\s*=\s*(\d+)", content, re.MULTILINE)
+                if wss_port_match:
+                    try:
+                        settings['wss_port'] = int(wss_port_match.group(1))
+                    except ValueError:
+                         print(f"Warning: Invalid WSS PORT value found in {server_config_path}, using default {settings['wss_port']}.")
+                else: print(f"Warning: Could not find WSS PORT setting in {server_config_path}, using default {settings['wss_port']}.")
+
+            # Server Debug
+            server_debug_match = re.search(r"^DEBUG\s*=\s*(True|False)", content, re.MULTILINE)
+            if server_debug_match:
+                # Convert Python boolean string to actual boolean
+                settings['server_debug'] = server_debug_match.group(1) == 'True'
+            else: print(f"Warning: Could not find DEBUG setting in {server_config_path}, using default {settings['server_debug']}.")
+
+    except FileNotFoundError: print(f"Warning: {server_config_path} not found. Using default settings for WSS Host/Server Debug.")
+    except Exception as e: print(f"Warning: Error reading {server_config_path}: {e}. Using default settings for WSS Host/Server Debug.")
 
     print("Initial settings loaded.")
     return settings
@@ -347,7 +367,7 @@ def write_config(settings):
     Reads existing file, modifies relevant lines, preserves others, and overwrites.
     Appends settings if not found. Creates file if it doesn't exist.
     Uses repr() for string/boolean values to ensure proper Python syntax.
-    Does NOT write HTTPS settings or Client DEBUG settings to this file.
+    Does NOT write HTTPS settings or Client settings to this file.
 
     Args:
         settings (dict): Dictionary containing at least 'wss_host', 'wss_port', 'server_debug'.
@@ -421,12 +441,12 @@ def write_config(settings):
 
 def write_client_config(settings):
     """
-    Writes the Client DEBUG setting back to the client/js/config.js file silently.
-    Reads existing file, modifies the relevant line, preserves others, and overwrites.
-    Appends the setting if not found. Creates file if it doesn't exist.
+    Writes the Client DEBUG setting and WSS Port back to the client/js/config.js file silently.
+    Reads existing file, modifies the relevant lines, preserves others, and overwrites.
+    Appends settings if not found. Creates file if it doesn't exist.
 
     Args:
-        settings (dict): Dictionary containing at least 'client_debug'.
+        settings (dict): Dictionary containing at least 'client_debug' and 'wss_port'.
 
     Returns:
         bool: True if writing was successful, False otherwise.
@@ -441,48 +461,82 @@ def write_client_config(settings):
         except FileNotFoundError: pass # Silently proceed if file not found
 
         new_lines = [] # List to hold the modified lines.
-        updated_flag = False # Flag to track if the setting was updated.
-        # Regex to find the DEBUG line, allowing for whitespace and optional comma
-        debug_pattern = re.compile(r"^\s*DEBUG:\s*(true|false)\s*,?", re.IGNORECASE)
-        # Format string for the new line (using lowercase js boolean)
-        # Preserve indentation and original comment structure if possible
-        debug_format_str = "    DEBUG: {value}, // Default to false for production\n" # Assuming comma was there
+        # Flags to track if settings were updated.
+        updated_flags = {'client_debug': False, 'wss_port': False}
+
+        # Define regex patterns and corresponding setting keys and format strings.
+        # Use lowercase 'true'/'false' for JS boolean.
+        # Use integer for port.
+        setting_patterns = {
+            # Regex for DEBUG: true/false (case-insensitive, optional comma/semicolon)
+            re.compile(r"^\s*DEBUG\s*[:=]\s*(true|false)\s*[,;]?", re.IGNORECASE):
+                ('client_debug', "    DEBUG: {value}, // Default to false for production\n"),
+            # Regex for webSocketPort: 1234 or webSocketPort = 1234 (optional comma/semicolon)
+            re.compile(r"^\s*webSocketPort\s*[:=]\s*(\d+)\s*[,;]?", re.IGNORECASE):
+                ('wss_port', "    webSocketPort: {value}, // Updated by helix_manager\n"),
+        }
 
         # Iterate through the existing lines.
         for line in lines:
-            match = debug_pattern.match(line)
-            # If the line matches the DEBUG pattern and we haven't updated it yet...
-            if match and not updated_flag:
-                # Format the new value (lowercase 'true' or 'false').
-                value_to_write = str(settings['client_debug']).lower()
-                # Try to preserve original indentation and comment if possible
-                leading_whitespace = line[:match.start(1) - len("DEBUG: ")] # Capture leading space
-                trailing_comment = ""
-                comment_match = re.search(r"//.*$", line)
-                if comment_match:
-                    trailing_comment = comment_match.group(0)
-                # Construct the new line
-                new_line_content = f"DEBUG: {value_to_write}," # Assume comma
-                new_line = f"{leading_whitespace}{new_line_content:<{len(match.group(0))}} {trailing_comment}\n".rstrip() + "\n" # Pad and add comment
-                # Fallback format if padding/comment logic fails
-                if not new_line.strip().startswith("DEBUG:"):
-                     new_line = debug_format_str.format(value=value_to_write)
+            line_updated = False
+            # Check if the current line matches any of the setting patterns.
+            for pattern, (key, format_str) in setting_patterns.items():
+                match = pattern.match(line)
+                # If a pattern matches and this setting hasn't been updated yet...
+                if match and not updated_flags[key]:
+                    # Format the new value.
+                    if key == 'client_debug':
+                        value_to_write = str(settings[key]).lower() # 'true' or 'false'
+                    elif key == 'wss_port':
+                        value_to_write = int(settings[key]) # Ensure integer
+                    else:
+                        value_to_write = settings[key] # Fallback
 
-                new_lines.append(new_line)
-                updated_flag = True # Mark as updated.
-            else:
-                # Append the line unchanged.
-                new_lines.append(line)
+                    # Try to preserve original indentation and comment if possible
+                    leading_whitespace = line[:match.start(1) - len(key.replace('_', '') + ': ')] if key == 'client_debug' else line[:match.start(1) - len('webSocketPort: ')]
+                    trailing_comment = ""
+                    comment_match = re.search(r"//.*$", line)
+                    if comment_match:
+                        trailing_comment = comment_match.group(0)
 
-        # If the DEBUG line was not found, append it.
-        if not updated_flag:
-            # print(f"Warning: DEBUG line not found in {config_file_path}, appending.") # Silent write
-            # Ensure there's a newline before appending if needed.
-            if new_lines and not new_lines[-1].endswith('\n'): new_lines.append('\n')
-            # Format the value (lowercase 'true' or 'false').
-            value_to_write = str(settings['client_debug']).lower()
-            # Append the new setting line using the standard format.
-            new_lines.append(debug_format_str.format(value=value_to_write))
+                    # Construct the new line content (key: value,)
+                    new_line_content = f"{key.replace('_', '')}: {value_to_write}," if key == 'client_debug' else f"webSocketPort: {value_to_write},"
+
+                    # Construct the full new line with padding and comment
+                    # Use a reasonable padding length based on typical line length
+                    padding_length = max(len(match.group(0)), 25) # Adjust padding base length as needed
+                    new_line = f"{leading_whitespace}{new_line_content:<{padding_length}} {trailing_comment}\n".rstrip() + "\n"
+
+                    # Fallback format if padding/comment logic fails or looks wrong
+                    if not new_line.strip().startswith(key.replace('_', '') + ':') and not new_line.strip().startswith('webSocketPort:'):
+                         new_line = format_str.format(value=value_to_write)
+
+                    new_lines.append(new_line)
+                    updated_flags[key], line_updated = True, True # Mark as updated.
+                    break
+            # If the line didn't match any setting pattern, append it unchanged.
+            if not line_updated: new_lines.append(line)
+
+        # Check for any settings that were not found in the existing file.
+        appended_header = False
+        for pattern, (key, format_str) in setting_patterns.items():
+            if not updated_flags[key]:
+                # Add a header comment if this is the first setting being appended.
+                if not appended_header:
+                    # Ensure there's a newline before the header if needed.
+                    if new_lines and not new_lines[-1].endswith('\n'): new_lines.append('\n')
+                    new_lines.append("\n    // --- Settings added/updated by helix_manager ---\n")
+                    appended_header = True
+                # print(f"Warning: {key.upper()} line not found in {config_file_path}, appending.") # Silent write
+                # Format the value.
+                if key == 'client_debug':
+                    value_to_write = str(settings[key]).lower()
+                elif key == 'wss_port':
+                    value_to_write = int(settings[key])
+                else:
+                    value_to_write = settings[key]
+                # Append the new setting line using the standard format.
+                new_lines.append(format_str.format(value=value_to_write))
 
         # Write the potentially modified lines back to the config file.
         with open(config_file_path, 'w', encoding='utf-8') as f: f.writelines(new_lines)
@@ -498,7 +552,7 @@ def config_menu(settings):
     """
     Displays the main configuration menu. Allows modification of WSS, HTTPS,
     and Debug settings held in the 'settings' dictionary.
-    WSS (HOST, PORT, DEBUG) and Client DEBUG settings are saved persistently
+    WSS (HOST, PORT, DEBUG) and Client (DEBUG, WSS_PORT) settings are saved persistently
     when starting the server.
 
     Args:
@@ -510,6 +564,7 @@ def config_menu(settings):
     while True:
         print("\n--- HeliX Configuration & Management ---")
         print(f"1. WSS Host:         {settings['wss_host']}")
+        # MODIFIED: Clarify WSS Port affects both server and client
         print(f"2. WSS Port:         {settings['wss_port']}")
         print(f"3. HTTPS Host:       {settings['https_host']}")
         print(f"4. HTTPS Port:       {settings['https_port']}")
@@ -534,7 +589,9 @@ def config_menu(settings):
                 try:
                     port_int = int(new_val)
                     if not (0 < port_int < 65536): print("Invalid port number (1-65535).")
-                    else: settings['wss_port'] = port_int
+                    else:
+                        settings['wss_port'] = port_int
+                        print("Note: WSS Port change will update server/config.py and client/js/config.js.")
                 except ValueError: print("Invalid port. Enter a number.")
         elif choice == '3':
             new_val = input(f"Enter new HTTPS Host [{settings['https_host']}]: ").strip()
@@ -568,7 +625,7 @@ def config_menu(settings):
             # Attempt to write both server and client configs silently
             print("Saving configuration...") # Indicate saving is happening
             server_saved = write_config(settings)
-            client_saved = write_client_config(settings)
+            client_saved = write_client_config(settings) # Now writes WSS Port too
             if server_saved and client_saved:
                 # print("All configurations saved successfully.") # Silent save
                 return True # Signal to start servers

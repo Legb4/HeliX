@@ -4,15 +4,13 @@
 // Define a configuration object to hold settings.
 const config = {
     /**
-     * The full URL for the WebSocket server connection.
-     * - Use 'wss://' for secure connections (required for Web Crypto API on non-localhost domains).
-     * - Use 'ws://' for insecure connections (only for local testing, not recommended for deployment).
-     * - Replace 'localhost' with the actual hostname or IP address of your server if deployed.
-     * - Ensure the port number (e.g., 5678) matches the port the Python WebSocket server is listening on.
+     * The port number for the WebSocket server connection.
+     * - This value should match the port the Python WebSocket server (server/main.py) is listening on.
+     * - This value is intended to be updated by the helix_manager.py script based on user configuration.
+     * - The client will dynamically construct the full WebSocket URL (e.g., wss://<hostname>:<port>)
+     *   using window.location.hostname and this port number.
      */
-    // Use wss:// and the actual hostname/IP of your server
-    // Ensure the port matches the WebSocket server port (e.g., 5678)
-    webSocketUrl: 'wss://localhost:5678',
+    webSocketPort: 5678,      // Default WSS port, updated by helix_manager
 
     /**
      * Debug Flag for Console Logging.
@@ -21,14 +19,15 @@ const config = {
      * - Set to `false` for production deployments to minimize information leakage
      *   and keep the console cleaner. Essential errors (`console.error`, `console.warn`)
      *   will still be logged regardless of this flag.
+     * - This value is intended to be updated by the helix_manager.py script.
      */
-    DEBUG: false,    // Default to false for production
+    DEBUG: false, // Default to false for production
 
     /**
      * Application Version String.
      * - Used by the /version command.
      */
-    APP_VERSION: "0.1 beta test", // NEW: Application version string
+    APP_VERSION: "0.1 beta test", // Application version string
 };
 
 // Make the config object globally accessible (if not using modules)
