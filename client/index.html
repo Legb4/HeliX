@@ -76,7 +76,7 @@
 
             <!-- Overlay Element -->
             <!-- This div will cover the main content area with a semi-transparent background -->
-            <!-- when modal-like panes (Info, Incoming Request, Settings) are shown. -->
+            <!-- when modal-like panes (Info, Incoming Request, Settings, SAS) are shown. -->
             <div id="overlay"></div>
             <!-- End Overlay Element -->
 
@@ -122,6 +122,25 @@
                 <button id="cancel-request-button">Cancel Request</button> <!-- Button to cancel the outgoing request -->
             </div>
 
+            <!-- SAS Verification Area -->
+            <!-- Shown after handshake completes, before chat is active. -->
+            <!-- Requires users to compare the SAS code out-of-band. -->
+            <!-- Appears *on top* of the overlay. -->
+            <div id="sas-verification-area">
+                <h3>Verify Connection</h3>
+                <p>Compare this code with your peer out-of-band (e.g., phone call) to ensure a secure connection:</p>
+                <code id="sas-display">--- ---</code> <!-- SAS code will be displayed here -->
+                <p>If the codes match, click "Confirm Match". If not, click "Deny / Abort".</p>
+                <!-- Buttons container -->
+                <div class="sas-buttons">
+                    <button id="sas-confirm-button">Confirm Match</button>
+                    <button id="sas-deny-button">Deny / Abort</button>
+                    <!-- NEW: Cancel button, initially hidden -->
+                    <button id="sas-cancel-pending-button" style="display: none;">Cancel</button>
+                </div>
+            </div>
+            <!-- END SAS Verification Area -->
+
             <!-- Active Chat Area (Shown when a chat session is established and selected) -->
             <!-- This is the main chat view containing the message history and input field. -->
             <!-- This pane replaces the welcome message, overlay is not used here. -->
@@ -160,9 +179,8 @@
                 <div id="message-input-area">
                     <!-- Attach File Button -->
                     <button id="attach-button" title="Attach File">📎</button>
-                    <!-- NEW: Emoji Picker Button -->
+                    <!-- Emoji Picker Button -->
                     <button id="emoji-picker-button" title="Emoji">😊</button>
-                    <!-- END NEW -->
                     <input type="text" id="message-input" placeholder="Type your message..."> <!-- Input field for typing messages -->
                     <button id="send-button">Send</button> <!-- Button to send the typed message -->
                 </div>
@@ -209,11 +227,10 @@
     <input type="file" id="file-input" style="display: none;">
     <!-- End Hidden File Input -->
 
-    <!-- NEW: Emoji Picker Panel (Initially Hidden) -->
+    <!-- Emoji Picker Panel (Initially Hidden) -->
     <div id="emoji-picker-panel" class="emoji-picker">
         <!-- Emojis will be populated here by JavaScript -->
     </div>
-    <!-- END NEW -->
 
     <!-- Load JavaScript Files -->
     <!-- Scripts are loaded at the end of the body to ensure the DOM is parsed before they run. -->

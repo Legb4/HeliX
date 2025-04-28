@@ -5,7 +5,8 @@
  * and all active/pending chat sessions. It acts as the central coordinator,
  * interacting with the WebSocketClient for network communication, the UIController
  * for display updates, and creating/managing individual Session instances.
- * This version uses ECDH for Perfect Forward Secrecy and IndexedDB for file transfers.
+ * This version uses ECDH for Perfect Forward Secrecy, IndexedDB for file transfers,
+ * and implements Short Authentication String (SAS) verification.
  */
 class SessionManager {
     /**
@@ -22,12 +23,12 @@ class SessionManager {
 
         // --- Constants ---
         // Define timeout durations and delays used throughout the manager.
-        this.HANDSHAKE_TIMEOUT_DURATION = 30000; // 30 seconds for handshake steps (key exchange, challenge).
+        this.HANDSHAKE_TIMEOUT_DURATION = 30000; // 30 seconds for handshake steps (key exchange, challenge, SAS). Increased slightly
         this.REQUEST_TIMEOUT_DURATION = 60000; // 60 seconds for the initial session request to be accepted/denied.
         this.REGISTRATION_TIMEOUT_DURATION = 15000; // 15 seconds to wait for registration success/failure reply.
         this.TYPING_STOP_DELAY = 3000; // Send TYPING_STOP message after 3 seconds of local user inactivity.
         this.TYPING_INDICATOR_TIMEOUT = 5000; // Hide peer's typing indicator after 5 seconds if no further typing messages or actual messages arrive.
-        // NEW: File Transfer Constants
+        // File Transfer Constants
         this.MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB limit (adjust as needed)
         this.CHUNK_SIZE = 256 * 1024; // 256 KB chunk size (adjust as needed)
         this.FILE_ACCEPT_TIMEOUT = 60000; // 60 seconds for receiver to accept/reject file
@@ -42,13 +43,13 @@ class SessionManager {
         this.STATE_FAILED_REGISTRATION = 'FAILED_REGISTRATION'; // Registration attempt failed.
         this.STATE_DISCONNECTED = 'DISCONNECTED'; // WebSocket connection lost or closed.
 
-        // --- Session-Specific States (Reflecting ECDH Flow) ---
+        // --- Session-Specific States (Reflecting ECDH + SAS Flow) ---
         // Define possible states for individual Session instances.
         // Initiator states:
         this.STATE_INITIATING_SESSION = 'INITIATING_SESSION'; // Sent Type 1 request, awaiting Type 2 (Accept + Peer ECDH Key).
         this.STATE_DERIVING_KEY_INITIATOR = 'DERIVING_KEY_INITIATOR'; // Received Type 2, deriving keys before sending Type 4.
         this.STATE_KEY_DERIVED_INITIATOR = 'KEY_DERIVED_INITIATOR'; // Keys derived, ready to send Type 4.
-        this.STATE_AWAITING_CHALLENGE_RESPONSE = 'AWAITING_CHALLENGE_RESPONSE'; // Sent Type 5, awaiting Type 6 (Response). - ADDED for clarity
+        this.STATE_AWAITING_CHALLENGE_RESPONSE = 'AWAITING_CHALLENGE_RESPONSE'; // Sent Type 5, awaiting Type 6 (Response).
         this.STATE_RECEIVED_CHALLENGE = 'RECEIVED_CHALLENGE'; // Received Type 5 (Challenge), ready to send Type 6 (Response).
         this.STATE_AWAITING_FINAL_CONFIRMATION = 'AWAITING_FINAL_CONFIRMATION'; // Sent Type 6, awaiting Type 7 (Established).
         // Responder states:
@@ -57,15 +58,19 @@ class SessionManager {
         this.STATE_AWAITING_CHALLENGE = 'AWAITING_CHALLENGE'; // Sent Type 2 (Accept + Own ECDH Key), awaiting Type 4 (Initiator ECDH Key).
         this.STATE_DERIVING_KEY_RESPONDER = 'DERIVING_KEY_RESPONDER'; // Received Type 4, deriving keys before sending Type 5.
         this.STATE_RECEIVED_INITIATOR_KEY = 'RECEIVED_INITIATOR_KEY'; // Received Type 4, keys derived, ready to send Type 5 (Challenge).
-        this.STATE_HANDSHAKE_COMPLETE = 'HANDSHAKE_COMPLETE'; // Received Type 6 (Response), verified, ready to send Type 7.
+        this.STATE_HANDSHAKE_COMPLETE_RESPONDER = 'HANDSHAKE_COMPLETE_RESPONDER'; // Received Type 6, verified, ready to send Type 7. (Intermediate state)
+        // SAS Verification states:
+        this.STATE_AWAITING_SAS_VERIFICATION = 'AWAITING_SAS_VERIFICATION'; // Handshake complete (Type 7 received/sent), SAS calculated, waiting for user/peer confirmation.
+        this.STATE_SAS_CONFIRMED_LOCAL = 'SAS_CONFIRMED_LOCAL'; // Local user confirmed SAS match, waiting for peer confirmation (Type 7.1).
+        this.STATE_SAS_CONFIRMED_PEER = 'SAS_CONFIRMED_PEER'; // Peer sent SAS confirmation (Type 7.1), waiting for local user confirmation.
         // Common states:
-        this.STATE_ACTIVE_SESSION = 'ACTIVE_SESSION'; // Handshake complete (Type 7 received/sent), ready for messages (Type 8).
+        this.STATE_ACTIVE_SESSION = 'ACTIVE_SESSION'; // Handshake & SAS verification complete, ready for messages (Type 8).
         // End/Error states:
         this.STATE_DENIED = 'DENIED'; // Request explicitly denied (Type 3) or target not found (Type -1).
         this.STATE_REQUEST_TIMED_OUT = 'REQUEST_TIMED_OUT'; // Initial request (Type 1) timed out.
         this.STATE_HANDSHAKE_TIMED_OUT = 'HANDSHAKE_TIMED_OUT'; // One of the handshake steps timed out.
         this.STATE_CANCELLED = 'CANCELLED'; // User cancelled an outgoing request.
-        // Note: STATE_DISCONNECTED is a manager state, sessions are reset on disconnect.
+        this.STATE_SAS_DENIED = 'SAS_DENIED'; // User clicked "Deny / Abort" or "Cancel" during SAS verification.
 
         // --- Manager State ---
         // Holds the current state of the application manager.
@@ -88,15 +93,19 @@ class SessionManager {
         this.typingStopTimeoutId = new Map(); // Map<peerId, timeoutId>
         // --------------------------------------
 
-        // --- NEW: IndexedDB State ---
+        // --- IndexedDB State ---
         this.db = null; // Will hold the IndexedDB database object.
         this.DB_NAME = 'HeliXFileTransferDB';
         this.DB_VERSION = 1;
         this.CHUNK_STORE_NAME = 'fileChunks';
         // ----------------------------
 
+        // --- Message Type Constants ---
+        this.TYPE_SAS_CONFIRM = 7.1;
+        // ------------------------------------
+
         // Log initialization (not wrapped in DEBUG as it's fundamental)
-        console.log('SessionManager initialized (ECDH Mode, IndexedDB for files).');
+        console.log('SessionManager initialized (ECDH Mode, IndexedDB for files, SAS Verification).');
         this.updateManagerState(this.STATE_INITIALIZING); // Set initial state.
         this.initDB(); // Initialize IndexedDB connection.
     }
@@ -162,19 +171,23 @@ class SessionManager {
         // Always log timeout errors.
         console.error(`Session [${peerId}] Handshake timed out!`);
         const session = this.sessions.get(peerId);
-        // Define the states during which a handshake timeout is relevant (adjust for ECDH flow)
+        // Define the states during which a handshake timeout is relevant (adjust for ECDH + SAS flow)
         const handshakeStates = [
             this.STATE_DERIVING_KEY_INITIATOR, this.STATE_KEY_DERIVED_INITIATOR,
-            this.STATE_AWAITING_CHALLENGE_RESPONSE, // Added
+            this.STATE_AWAITING_CHALLENGE_RESPONSE,
             this.STATE_RECEIVED_CHALLENGE, this.STATE_AWAITING_FINAL_CONFIRMATION,
             this.STATE_GENERATING_ACCEPT_KEYS, this.STATE_AWAITING_CHALLENGE,
             this.STATE_DERIVING_KEY_RESPONDER, this.STATE_RECEIVED_INITIATOR_KEY,
-            this.STATE_HANDSHAKE_COMPLETE
+            this.STATE_HANDSHAKE_COMPLETE_RESPONDER, // Added intermediate state
+            // SAS states are also part of the extended handshake/verification
+            this.STATE_AWAITING_SAS_VERIFICATION,
+            this.STATE_SAS_CONFIRMED_LOCAL,
+            this.STATE_SAS_CONFIRMED_PEER
         ];
         // Check if the session exists and is still in a relevant handshake state.
         if (session && handshakeStates.includes(session.state)) {
             session.updateState(this.STATE_HANDSHAKE_TIMED_OUT);
-            const message = `Handshake with ${peerId} timed out. Please try initiating the session again.`;
+            const message = `Handshake or verification with ${peerId} timed out. Please try initiating the session again.`;
             // Always try to show the info message pane for handshake timeouts.
             this.uiController.showInfoMessage(peerId, message, false); // No retry for handshake timeout.
             this.uiController.playSound('error'); // Play error sound
@@ -306,7 +319,7 @@ class SessionManager {
 
     /**
      * Resets a specific session, cleaning up its state, timeouts, UI elements, typing status,
-     * and any associated file transfer data (including IndexedDB chunks and object URLs).
+     * SAS status, and any associated file transfer data (including IndexedDB chunks and object URLs).
      * @param {string} peerId - The ID of the peer whose session needs resetting.
      * @param {boolean} [notifyUserViaAlert=false] - Whether to show a fallback alert to the user with the reason (used if info pane isn't shown).
      * @param {string} [reason="Session reset."] - The reason for the reset (used in logs and optional alert).
@@ -324,7 +337,7 @@ class SessionManager {
             this.clearTypingIndicatorTimeout(session); // Clear peer typing indicator timeout
             this.clearLocalTypingTimeout(peerId); // Clear local typing stop timeout
 
-            // --- NEW: File Transfer Cleanup ---
+            // File Transfer Cleanup
             // Iterate through any active/pending transfers for this session and clean them up.
             if (session.transferStates && session.transferStates.size > 0) {
                 // Log cleanup only if DEBUG is enabled.
@@ -336,13 +349,12 @@ class SessionManager {
                 }
                 session.transferStates.clear(); // Clear the map in the session object
             }
-            // --- End File Transfer Cleanup ---
 
             // Check if this session was the one being displayed or pending action.
             const wasDisplayed = (this.displayedPeerId === peerId);
             const wasPendingAction = (this.pendingPeerIdForAction === peerId);
 
-            // Reset the session object's internal state and keys.
+            // Reset the session object's internal state (includes keys, SAS state, etc.).
             session.resetState();
             // Remove the session from the manager's active sessions map.
             this.sessions.delete(peerId);
@@ -357,21 +369,21 @@ class SessionManager {
             if (wasDisplayed) {
                 this.displayedPeerId = null; // No session is displayed now.
                 this.uiController.hideTypingIndicator(); // Hide indicator if this chat was active.
-                // Show default view *unless* an info message was just displayed for this peer.
-                // The info message pane should persist until closed by the user.
-                if (!this.uiController.isInfoPaneVisibleFor(peerId)) {
+                // Show default view *unless* an info message or SAS pane was just displayed for this peer.
+                // These panes should persist until closed/handled by the user.
+                if (!this.uiController.isInfoPaneVisibleFor(peerId) && !this.uiController.isSasPaneVisibleFor(peerId)) { // Check SAS pane too
                      this.uiController.showDefaultRegisteredView(this.identifier);
                 }
-                // Use alert only if requested AND info pane wasn't shown.
-                if (notifyUserViaAlert && reason && !this.uiController.isInfoPaneVisibleFor(peerId)) { alert(reason); }
+                // Use alert only if requested AND info/SAS pane wasn't shown.
+                if (notifyUserViaAlert && reason && !this.uiController.isInfoPaneVisibleFor(peerId) && !this.uiController.isSasPaneVisibleFor(peerId)) { alert(reason); }
             }
             else if (wasPendingAction) {
                  // If it was pending action (incoming request), clear the flag.
                  this.pendingPeerIdForAction = null;
                  // If no other chat is displayed, show the welcome message.
                  if (!this.displayedPeerId) { this.uiController.showDefaultRegisteredView(this.identifier); }
-                 // Use alert only if requested AND info pane wasn't shown.
-                 if (notifyUserViaAlert && reason && !this.uiController.isInfoPaneVisibleFor(peerId)) { alert(reason); }
+                 // Use alert only if requested AND info/SAS pane wasn't shown.
+                 if (notifyUserViaAlert && reason && !this.uiController.isInfoPaneVisibleFor(peerId) && !this.uiController.isSasPaneVisibleFor(peerId)) { alert(reason); }
             } else {
                  // Session was reset but wasn't displayed or pending action.
                  // Use alert if requested.
@@ -386,7 +398,7 @@ class SessionManager {
         // After resetting, if no sessions remain and we are registered, ensure the default view is shown
         // and initiation controls are enabled.
          if (this.sessions.size === 0 && this.managerState === this.STATE_REGISTERED) {
-             if (!this.displayedPeerId && !this.pendingPeerIdForAction && !this.uiController.isAnyInfoPaneVisible()) {
+             if (!this.displayedPeerId && !this.pendingPeerIdForAction && !this.uiController.isAnyInfoPaneVisible() && !this.uiController.isAnySasPaneVisible()) { // Check SAS pane too
                  this.uiController.showDefaultRegisteredView(this.identifier);
              }
              this.uiController.updateStatus(`Registered as: ${this.identifier}`);
@@ -784,7 +796,7 @@ class SessionManager {
     /**
      * Sends the SESSION_ESTABLISHED (Type 7) message to confirm successful handshake.
      * Called by responder after receiving and verifying Type 6 (Response).
-     * Plays the session begin sound.
+     * After sending, triggers SAS calculation locally for the responder.
      * @param {Session} session - The session object.
      */
     async sendSessionEstablished(session) {
@@ -796,14 +808,14 @@ class SessionManager {
             // Log sending only if DEBUG is enabled.
             if (config.DEBUG) console.log("Sending SESSION_ESTABLISHED (Type 7):", msg);
             if (this.wsClient.sendMessage(msg)) {
-                // Handshake is complete! Update state, clear timeout, update UI.
-                session.updateState(this.STATE_ACTIVE_SESSION);
-                this.clearHandshakeTimeout(session); // Handshake successful, no more timeout needed.
-                this.uiController.addSessionToList(session.peerId); // Ensure it's in the list.
-                this.switchToSessionView(session.peerId); // Switch to the active chat view.
-                this.uiController.playSound('begin'); // Play session begin sound
-                // Log session active message (not wrapped in DEBUG as it's significant)
-                console.log(`%cSession active with ${session.peerId}. Ready to chat!`, "color: green; font-weight: bold;");
+                // Trigger SAS calculation AFTER sending Type 7
+                // The Responder has now completed the crypto handshake and notified the Initiator.
+                // Now, the Responder calculates and shows their own SAS pane.
+                session.updateState(this.STATE_HANDSHAKE_COMPLETE_RESPONDER); // Intermediate state
+                this.uiController.updateStatus(`Handshake complete with ${session.peerId}. Verifying connection...`);
+                // Use processMessageResult to handle the SAS calculation and UI update
+                // This keeps the logic centralized.
+                await this.processMessageResult(session, { action: 'CALCULATE_AND_SHOW_SAS' });
             } else {
                  // Throw error if final confirmation send fails.
                  throw new Error("Connection error sending final confirmation.");
@@ -835,11 +847,10 @@ class SessionManager {
         if (!session || session.state !== this.STATE_ACTIVE_SESSION) {
             // Always log this warning.
             console.warn(`Cannot send message: Session with ${peerId} not active.`);
-            // --- UPDATED: Use addCommandError for feedback ---
+            // Use addCommandError for feedback
             if (this.displayedPeerId === peerId) {
                 this.uiController.addCommandError("Error: Cannot send message, session is not active.");
             }
-            // --- END UPDATE ---
             return;
         }
         // Ensure the derived session key exists.
@@ -857,9 +868,8 @@ class SessionManager {
             console.warn("Attempted to send empty message."); return;
         }
 
-        // --- If we were typing, send TYPING_STOP first ---
+        // If we were typing, send TYPING_STOP first
         this.sendTypingStop(peerId);
-        // ------------------------------------------------
 
         // Disable chat controls and show loading state while processing/encrypting/sending.
         this.uiController.setChatControlsEnabled(false, true);
@@ -991,9 +1001,8 @@ class SessionManager {
             console.error("Error during sendEncryptedMessage:", error);
             this.uiController.playSound('error'); // Play error sound
             if (this.displayedPeerId === peerId) {
-                // --- UPDATED: Use addCommandError for send errors ---
+                // Use addCommandError for send errors
                 this.uiController.addCommandError(`Error sending message: ${error.message}`);
-                // --- END UPDATE ---
             } else {
                 alert(`Error sending message to ${peerId}: ${error.message}`);
             }
@@ -1033,7 +1042,11 @@ class SessionManager {
         this.uiController.playSound('end');
 
         // Show info pane locally *before* resetting the session.
-        const reason = `You ended the session with ${peerId}.`;
+        // Use a reason appropriate to the state (e.g., if SAS was denied vs. normal end)
+        let reason = `You ended the session with ${peerId}.`;
+        if (session.state === this.STATE_SAS_DENIED) {
+            reason = `Session aborted due to verification mismatch or cancellation with ${peerId}.`;
+        }
         this.uiController.showInfoMessage(peerId, reason, false); // Show info, no retry
         // Reset the session locally immediately, but without the alert fallback.
         await this.resetSession(peerId, false, reason); // notifyUserViaAlert = false
@@ -1056,7 +1069,8 @@ class SessionManager {
         const terminalStates = [
             this.STATE_DENIED,
             this.STATE_REQUEST_TIMED_OUT,
-            this.STATE_HANDSHAKE_TIMED_OUT
+            this.STATE_HANDSHAKE_TIMED_OUT,
+            this.STATE_SAS_DENIED // Add SAS denial state
         ];
         if (session && terminalStates.includes(session.state)) {
             // If the session is in a terminal state, reset it now.
@@ -1307,15 +1321,18 @@ class SessionManager {
         // Log attempt only if DEBUG is enabled.
         if (config.DEBUG) console.log("Attempting to notify active peers of disconnect...");
         this.sessions.forEach((session, peerId) => {
-            // Define states where notifying the peer makes sense.
+            // Define states where notifying the peer makes sense. Include SAS states.
             const relevantStates = [
                 this.STATE_ACTIVE_SESSION,
                 this.STATE_DERIVING_KEY_INITIATOR, this.STATE_KEY_DERIVED_INITIATOR,
-                this.STATE_AWAITING_CHALLENGE_RESPONSE, // Added
+                this.STATE_AWAITING_CHALLENGE_RESPONSE,
                 this.STATE_RECEIVED_CHALLENGE, this.STATE_AWAITING_FINAL_CONFIRMATION,
                 this.STATE_GENERATING_ACCEPT_KEYS, this.STATE_AWAITING_CHALLENGE,
                 this.STATE_DERIVING_KEY_RESPONDER, this.STATE_RECEIVED_INITIATOR_KEY,
-                this.STATE_HANDSHAKE_COMPLETE,
+                this.STATE_HANDSHAKE_COMPLETE_RESPONDER, // Added intermediate state
+                this.STATE_AWAITING_SAS_VERIFICATION,
+                this.STATE_SAS_CONFIRMED_LOCAL,
+                this.STATE_SAS_CONFIRMED_PEER,
                 this.STATE_INITIATING_SESSION, this.STATE_REQUEST_RECEIVED // Notify even if pending/handshaking
             ];
             // If the session is in a relevant state...
@@ -1420,7 +1437,7 @@ class SessionManager {
                 return;
             }
 
-            // --- Route File Transfer Messages ---
+            // Route File Transfer Messages
             if (type >= 12 && type <= 17) {
                 // Log routing only if DEBUG is enabled.
                 if (config.DEBUG) console.log(`Routing file transfer message type ${type} to session [${relevantPeerId}]`);
@@ -1428,9 +1445,8 @@ class SessionManager {
                 await this.processMessageResult(session, fileActionResult); // Use existing result processor
                 return; // Processing complete for file transfer messages.
             }
-            // --- End File Transfer Routing ---
 
-            // 7. Process Regular Chat/Handshake Message within the Session
+            // 7. Process Regular Chat/Handshake/SAS Message within the Session
             // Log routing only if DEBUG is enabled.
             if (config.DEBUG) console.log(`Routing message type ${type} to session [${relevantPeerId}]`);
             // Call the session's processMessage method, which returns an action object.
@@ -1466,18 +1482,22 @@ class SessionManager {
         if (config.DEBUG) console.log(`Session [${peerId}] Action requested: ${result.action}`);
 
         // --- Timeout Clearing Logic ---
-        // Clear handshake timeout if we are moving out of a handshake state towards active/reset
+        // Clear handshake timeout if we are moving out of a handshake state towards active/reset/SAS
         const handshakeStates = [
             this.STATE_DERIVING_KEY_INITIATOR, this.STATE_KEY_DERIVED_INITIATOR,
-            this.STATE_AWAITING_CHALLENGE_RESPONSE, // Added
+            this.STATE_AWAITING_CHALLENGE_RESPONSE,
             this.STATE_RECEIVED_CHALLENGE, this.STATE_AWAITING_FINAL_CONFIRMATION,
             this.STATE_GENERATING_ACCEPT_KEYS, this.STATE_AWAITING_CHALLENGE,
             this.STATE_DERIVING_KEY_RESPONDER, this.STATE_RECEIVED_INITIATOR_KEY,
-            this.STATE_HANDSHAKE_COMPLETE
+            this.STATE_HANDSHAKE_COMPLETE_RESPONDER, // Added intermediate state
+            // SAS states are part of the extended handshake
+            this.STATE_AWAITING_SAS_VERIFICATION,
+            this.STATE_SAS_CONFIRMED_LOCAL,
+            this.STATE_SAS_CONFIRMED_PEER
         ];
         const wasInHandshake = handshakeStates.includes(session.state);
-        // Clear if action is SESSION_ACTIVE, RESET, or SHOW_INFO (indicating handshake ended)
-        if (wasInHandshake && ['SESSION_ACTIVE', 'RESET', 'SHOW_INFO'].includes(result.action)) {
+        // Clear if action is SESSION_ACTIVE, RESET, SHOW_INFO, or CALCULATE_AND_SHOW_SAS
+        if (wasInHandshake && ['SESSION_ACTIVE', 'RESET', 'SHOW_INFO', 'CALCULATE_AND_SHOW_SAS'].includes(result.action)) {
              this.clearHandshakeTimeout(session);
         }
         // Clear request timeout if we received accept (SEND_TYPE_4) or deny/error (SHOW_INFO)
@@ -1503,18 +1523,45 @@ class SessionManager {
                 break;
             case 'SEND_TYPE_7':
                 this.uiController.updateStatus(`Challenge verified with ${peerId}. Establishing session...`);
-                await this.sendSessionEstablished(session); // Plays 'begin' sound internally
+                await this.sendSessionEstablished(session); // Now triggers SAS flow locally
                 break;
 
-            // Action indicating session is now active (from initiator's perspective after receiving Type 7):
-            case 'SESSION_ACTIVE':
-                // --- FIX: Clear handshake timeout for initiator ---
-                this.clearHandshakeTimeout(session);
-                // -------------------------------------------------
-                this.switchToSessionView(peerId); // Ensure view is updated.
-                this.uiController.playSound('begin'); // Play session begin sound
-                // Log session active message (not wrapped in DEBUG as it's significant)
-                console.log(`%cSession active with ${peerId}. Ready to chat!`, "color: green; font-weight: bold;");
+            // SAS Verification Flow
+            case 'CALCULATE_AND_SHOW_SAS':
+                this.uiController.updateStatus(`Handshake complete with ${peerId}. Verifying connection...`);
+                try {
+                    const sasString = await session.cryptoModule.deriveSas(session.peerPublicKey);
+                    if (sasString) {
+                        session.sas = sasString; // Store the derived SAS
+                        session.updateState(this.STATE_AWAITING_SAS_VERIFICATION); // Update state
+                        this.uiController.showSasVerificationPane(peerId, sasString); // Show the pane
+                        this.startHandshakeTimeout(session); // Restart timeout for SAS verification step
+                    } else {
+                        throw new Error("Failed to derive SAS.");
+                    }
+                } catch (error) {
+                    console.error(`Session [${peerId}] Error calculating/showing SAS:`, error);
+                    this.uiController.playSound('error');
+                    await this.resetSession(peerId, true, `Security verification failed: ${error.message}`);
+                }
+                break;
+            case 'PEER_SAS_CONFIRMED':
+                // Peer confirmed. Check if we have also confirmed locally.
+                if (session.localSasConfirmed) {
+                    // Both confirmed! Session is now active.
+                    session.updateState(this.STATE_ACTIVE_SESSION);
+                    this.clearHandshakeTimeout(session); // Verification complete
+                    this.uiController.showActiveChat(peerId); // Show chat UI
+                    this.uiController.enableActiveChatControls(); // Enable input etc.
+                    this.uiController.playSound('begin'); // Play session begin sound
+                    console.log(`%cSession active with ${peerId}. SAS Verified. Ready to chat!`, "color: green; font-weight: bold;");
+                    this.uiController.updateStatus(`Session active with ${peerId}.`);
+                } else {
+                    // Peer confirmed, but we haven't yet. Update state and status.
+                    session.updateState(this.STATE_SAS_CONFIRMED_PEER); // Update state
+                    this.uiController.updateStatus(`Peer ${peerId} confirmed match. Waiting for your confirmation.`);
+                    // Keep SAS pane visible, keep timeout running.
+                }
                 break;
 
             // Actions requesting UI updates:
@@ -1533,7 +1580,6 @@ class SessionManager {
                     this.uiController.playSound('notification');
                 }
                 break;
-            // --- Handle display for /me action ---
             case 'DISPLAY_ME_ACTION':
                 // Clear typing indicator when action message arrives.
                 this.clearTypingIndicatorTimeout(session);
@@ -1545,11 +1591,9 @@ class SessionManager {
                     // Mark as unread if chat not displayed.
                     this.uiController.setUnreadIndicator(peerId, true);
                 }
-                // --- ADDED: Play notification sound for /me actions ---
+                // Play notification sound for /me actions
                 this.uiController.playSound('notification');
-                // --- END ADDED ---
                 break;
-            // --- END /me Action Handling ---
             case 'DISPLAY_SYSTEM_MESSAGE':
                  // Display system messages only if the relevant chat is active.
                  if (this.displayedPeerId === peerId) {
@@ -1589,7 +1633,8 @@ class SessionManager {
                 // Check if the reason indicates a handshake error or if the session state implies an error
                 const isErrorReset = reason.toLowerCase().includes('error') ||
                                      reason.toLowerCase().includes('failed') ||
-                                     session.state === this.STATE_HANDSHAKE_TIMED_OUT; // Add other error states if needed
+                                     session.state === this.STATE_HANDSHAKE_TIMED_OUT ||
+                                     session.state === this.STATE_SAS_DENIED; // Include SAS denial
                 if (isErrorReset) {
                     this.uiController.playSound('error');
                 } else if (reason.includes('ended by') || reason.includes('You ended') || reason.includes('denied request') || reason.includes('cancelled')) {
@@ -1632,7 +1677,6 @@ class SessionManager {
             case 'NONE':
             default:
                 // No specific action needed, but ensure handshake timeout is cleared if applicable.
-                // FIX: Check wasInHandshake flag here too
                 if (wasInHandshake) this.clearHandshakeTimeout(session);
                 break;
         }
@@ -1795,9 +1839,8 @@ class SessionManager {
          this.clearRegistrationTimeout(); // Clear registration timeout if it was running.
          const currentActivePeer = this.displayedPeerId; // Store potentially active peer.
 
-         // --- NEW: Cleanup active file transfers before resetting sessions ---
+         // Cleanup active file transfers before resetting sessions
          await this.handleDisconnectionCleanup();
-         // ------------------------------------------------------------------
 
          // If there were active sessions, reset them all.
          if (this.sessions.size > 0) {
@@ -1827,7 +1870,7 @@ class SessionManager {
 
     /**
      * Switches the main content view to display the specified session.
-     * Updates the UI based on the session's current state (active chat, incoming request, info, etc.).
+     * Updates the UI based on the session's current state (active chat, incoming request, info, SAS, etc.).
      * Clears unread indicators and hides typing indicators for the switched-to session.
      * @param {string} peerId - The identifier of the peer whose session view to display.
      */
@@ -1845,9 +1888,8 @@ class SessionManager {
         if (config.DEBUG) console.log(`Switching view to session with ${peerId}`);
         this.displayedPeerId = peerId; // Set this *before* updating UI panes.
 
-        // --- Hide typing indicator when switching views ---
+        // Hide typing indicator when switching views
         this.uiController.hideTypingIndicator();
-        // -------------------------------------------------
 
         // Clear the unread indicator for the session being viewed.
         this.uiController.setUnreadIndicator(peerId, false);
@@ -1859,9 +1901,6 @@ class SessionManager {
             this.uiController.showActiveChat(peerId);
             // Populate message area with history for this session.
             session.messages.forEach(msg => {
-                // Check if it's a file transfer message (needs a way to distinguish, maybe msg.isTransfer?)
-                // For now, assume addMessage handles regular text
-                // --- UPDATED: Check for action messages in history ---
                 if (msg.type === 'me-action') {
                     this.uiController.addMeActionMessage(msg.sender, msg.text);
                 } else if (msg.type !== 'file') { // Assuming a 'file' type isn't used for history yet
@@ -1869,23 +1908,17 @@ class SessionManager {
                 } else {
                     // TODO: Need logic to re-render file transfer messages from history if needed
                 }
-                // --- END UPDATE ---
             });
             // Re-render any active file transfers for this session
             if (session.transferStates) {
                 session.transferStates.forEach((state, transferId) => {
-                    // Determine sender/receiver based on state.isSender
                     this.uiController.addFileTransferMessage(transferId, peerId, state.fileName, state.fileSize, state.isSender);
                     this.uiController.updateFileTransferStatus(transferId, state.status);
                     if (state.progress > 0) {
                         this.uiController.updateFileTransferProgress(transferId, state.progress);
                     }
-                    // TODO: Show appropriate buttons based on state (e.g., if status is 'complete' and !isSender, show download)
                     if (state.status === 'complete' && !state.isSender && state.blobUrl) {
-                         // Need to recreate blob from DB if page reloaded, or store blobUrl in state?
-                         // For now, assume blobUrl is available if state is complete (might need adjustment)
-                         // This part needs careful thought on how to handle page reloads vs simple view switching
-                         // Let's assume for now we don't re-render download links on switch, only on completion.
+                         // Assume blobUrl is available if state is complete (might need adjustment)
                     } else if (state.status === 'pending_acceptance' && !state.isSender) {
                         // Show accept/reject (handled by addFileTransferMessage)
                     } else if ((state.status === 'initiating' || state.status === 'uploading') && state.isSender) {
@@ -1895,15 +1928,20 @@ class SessionManager {
                     }
                 });
             }
+            // Enable chat controls since session is active
+            this.uiController.enableActiveChatControls();
             this.uiController.updateStatus(`Session active with ${peerId}.`);
         } else if (session.state === this.STATE_REQUEST_RECEIVED) {
             // If switching to a session that has an incoming request needing action.
             this.pendingPeerIdForAction = peerId; // Mark as needing action.
             this.uiController.showIncomingRequest(peerId);
             this.uiController.updateStatus(`Incoming request from ${peerId}`);
-        } else if (session.state === this.STATE_DENIED || session.state === this.STATE_HANDSHAKE_TIMED_OUT) {
-             // Show info pane for denied or handshake timeout states.
-             const message = session.state === this.STATE_DENIED ? `Session request denied by ${peerId}.` : `Handshake with ${peerId} timed out. Please try initiating the session again.`;
+        } else if (session.state === this.STATE_DENIED || session.state === this.STATE_HANDSHAKE_TIMED_OUT || session.state === this.STATE_SAS_DENIED) {
+             // Show info pane for denied, handshake timeout, or SAS denied states.
+             let message = `An issue occurred with ${peerId}.`;
+             if (session.state === this.STATE_DENIED) message = `Session request denied by ${peerId}.`;
+             if (session.state === this.STATE_HANDSHAKE_TIMED_OUT) message = `Handshake or verification with ${peerId} timed out.`;
+             if (session.state === this.STATE_SAS_DENIED) message = `Session aborted due to verification mismatch or cancellation with ${peerId}.`; // Updated message
              this.uiController.showInfoMessage(peerId, message, false); // No retry.
              this.uiController.updateStatus(message);
         } else if (session.state === this.STATE_REQUEST_TIMED_OUT) {
@@ -1915,6 +1953,24 @@ class SessionManager {
              // Show waiting pane if we initiated and are waiting for accept/deny.
              this.uiController.showWaitingForResponse(peerId);
              this.uiController.updateStatus(`Waiting for response from ${peerId}...`);
+        }
+        // Handle SAS Verification State
+        else if (session.state === this.STATE_AWAITING_SAS_VERIFICATION ||
+                 session.state === this.STATE_SAS_CONFIRMED_LOCAL ||
+                 session.state === this.STATE_SAS_CONFIRMED_PEER) {
+            if (session.sas) {
+                this.uiController.showSasVerificationPane(peerId, session.sas);
+                let statusText = `Verify connection with ${peerId}...`;
+                if (session.state === this.STATE_SAS_CONFIRMED_LOCAL) statusText = `Waiting for ${peerId} to confirm... Click Cancel to abort.`; // Updated status
+                if (session.state === this.STATE_SAS_CONFIRMED_PEER) statusText = `Peer ${peerId} confirmed. Waiting for your confirmation...`;
+                this.uiController.updateStatus(statusText);
+                // Ensure correct buttons are shown based on state
+                this.uiController.setSasControlsEnabled(true, false, session.state === this.STATE_SAS_CONFIRMED_LOCAL); // Show Cancel only if local confirmed
+            } else {
+                // Should not happen if state is correct, but handle gracefully
+                console.error(`Session [${peerId}] in SAS state but SAS string is missing!`);
+                this.uiController.showInfoMessage(peerId, "Error during security verification.", false);
+            }
         }
         else { // Other intermediate handshake states
             // For other states (key exchange, challenge/response), just show the welcome message pane
@@ -1929,14 +1985,14 @@ class SessionManager {
                 statusText = `Session with ${peerId}: Deriving keys...`;
             } else if (session.state === this.STATE_AWAITING_CHALLENGE) {
                 statusText = `Session with ${peerId}: Waiting for peer's key...`;
-            } else if (session.state === this.STATE_AWAITING_CHALLENGE_RESPONSE) { // Added
+            } else if (session.state === this.STATE_AWAITING_CHALLENGE_RESPONSE) {
                 statusText = `Session with ${peerId}: Waiting for challenge response...`;
             } else if (session.state === this.STATE_RECEIVED_CHALLENGE) {
                 statusText = `Session with ${peerId}: Received challenge, preparing response...`;
             } else if (session.state === this.STATE_AWAITING_FINAL_CONFIRMATION) {
                 statusText = `Session with ${peerId}: Waiting for final confirmation...`;
-            } else if (session.state === this.STATE_HANDSHAKE_COMPLETE) {
-                 statusText = `Session with ${peerId}: Handshake complete, establishing...`;
+            } else if (session.state === this.STATE_HANDSHAKE_COMPLETE_RESPONDER) {
+                 statusText = `Session with ${peerId}: Handshake complete, verifying...`;
             }
             this.uiController.updateStatus(statusText);
         }
@@ -1950,7 +2006,123 @@ class SessionManager {
         return this.displayedPeerId;
     }
 
-    // --- NEW: File Transfer Logic ---
+    // --- SAS Verification Handlers ---
+
+    /**
+     * Handles the user clicking the "Confirm Match" button in the SAS pane.
+     * Sends a confirmation message (Type 7.1) to the peer and updates state.
+     * If both sides have confirmed, transitions to the active chat state.
+     * @param {string} peerId - The peer ID for the session being confirmed.
+     */
+    async handleSasConfirm(peerId) {
+        const session = this.sessions.get(peerId);
+        if (!session || (session.state !== this.STATE_AWAITING_SAS_VERIFICATION && session.state !== this.STATE_SAS_CONFIRMED_PEER)) {
+            console.warn(`Cannot confirm SAS for ${peerId}: Session not found or invalid state (${session?.state}).`);
+            return;
+        }
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${peerId}] Local user confirmed SAS match.`);
+
+        // --- MODIFICATION: Show Cancel button while waiting ---
+        // Hide Confirm/Deny, show Cancel button (enabled)
+        // Pass enabled=true, loadingState=false, showCancel=true
+        this.uiController.setSasControlsEnabled(true, false, true);
+        // --- END MODIFICATION ---
+
+        session.localSasConfirmed = true; // Mark local confirmation
+
+        // Send confirmation message to peer
+        const msg = { type: this.TYPE_SAS_CONFIRM, payload: { targetId: peerId, senderId: this.identifier } };
+        if (this.wsClient.sendMessage(msg)) {
+            // Check if peer has already confirmed
+            if (session.peerSasConfirmed) {
+                // Both confirmed! Activate session.
+                session.updateState(this.STATE_ACTIVE_SESSION);
+                this.clearHandshakeTimeout(session); // Verification complete
+                this.uiController.showActiveChat(peerId); // Show chat UI
+                this.uiController.enableActiveChatControls(); // Enable input etc.
+                this.uiController.playSound('begin'); // Play session begin sound
+                console.log(`%cSession active with ${peerId}. SAS Verified. Ready to chat!`, "color: green; font-weight: bold;");
+                this.uiController.updateStatus(`Session active with ${peerId}.`);
+            } else {
+                // We confirmed, but waiting for peer. Update state and status.
+                session.updateState(this.STATE_SAS_CONFIRMED_LOCAL);
+                this.uiController.updateStatus(`Confirmation sent. Waiting for ${peerId} to confirm... Click Cancel to abort.`); // Updated status
+                // Keep SAS pane visible (with Cancel button shown), keep timeout running.
+                // Buttons already updated by setSasControlsEnabled above.
+            }
+        } else {
+            // Failed to send confirmation
+            console.error(`Session [${peerId}] Failed to send SAS confirmation.`);
+            this.uiController.playSound('error');
+            // Re-enable Confirm/Deny buttons on send failure
+            this.uiController.setSasControlsEnabled(true, false, false);
+            // Show error in status or info pane? For now, just status.
+            this.uiController.updateStatus(`Error sending confirmation to ${peerId}.`);
+            // Reset local confirmation flag
+            session.localSasConfirmed = false;
+        }
+    }
+
+    /**
+     * Handles the user clicking the "Deny / Abort" button in the SAS pane.
+     * Ends the session locally and notifies the peer.
+     * @param {string} peerId - The peer ID for the session being denied/aborted.
+     */
+    async handleSasDeny(peerId) {
+        const session = this.sessions.get(peerId);
+        // Allow denial only if awaiting verification (before local confirm)
+        if (!session || session.state !== this.STATE_AWAITING_SAS_VERIFICATION) {
+            console.warn(`Cannot deny SAS for ${peerId}: Session not found or invalid state (${session?.state}).`);
+            return;
+        }
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${peerId}] Local user denied SAS match / aborted session.`);
+
+        // Disable SAS controls immediately
+        this.uiController.setSasControlsEnabled(false, true, false); // Show loading on Deny button
+
+        // Update state to reflect denial
+        session.updateState(this.STATE_SAS_DENIED);
+
+        // End the session (sends Type 9, resets locally, shows info pane)
+        const reason = `Session aborted due to verification mismatch or cancellation with ${peerId}.`;
+        await this.endSession(peerId); // endSession will call resetSession
+        // Ensure the specific info message is shown after resetSession might have cleared the view
+        this.uiController.showInfoMessage(peerId, reason, false);
+    }
+
+    /**
+     * Handles the user clicking the "Cancel" button after confirming SAS locally.
+     * Ends the session locally and notifies the peer.
+     * @param {string} peerId - The peer ID for the session being cancelled.
+     */
+    async handleSasCancelPending(peerId) {
+        const session = this.sessions.get(peerId);
+        // Only allow cancellation if we have confirmed locally but are waiting for peer
+        if (!session || session.state !== this.STATE_SAS_CONFIRMED_LOCAL) {
+            console.warn(`Cannot cancel SAS for ${peerId}: Session not found or invalid state (${session?.state}).`);
+            return;
+        }
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${peerId}] Local user cancelled SAS while waiting for peer.`);
+
+        // Disable SAS controls immediately
+        this.uiController.setSasControlsEnabled(false, true, true); // Show loading on Cancel button
+
+        // Update state to reflect cancellation/denial
+        session.updateState(this.STATE_SAS_DENIED); // Reuse SAS_DENIED state
+
+        // End the session (sends Type 9, resets locally, shows info pane)
+        const reason = `Session cancelled while waiting for ${peerId} to confirm verification.`;
+        await this.endSession(peerId); // endSession will call resetSession
+        // Ensure the specific info message is shown after resetSession might have cleared the view
+        this.uiController.showInfoMessage(peerId, reason, false);
+    }
+    // --- END SAS Verification Handlers ---
+
+
+    // --- File Transfer Logic ---
 
     /**
      * Handles the file selection event from the hidden file input.
@@ -2107,7 +2279,7 @@ class SessionManager {
             const completePayload = { targetId: peerId, senderId: this.identifier, transferId: transferId };
             if (this.wsClient.sendMessage({ type: 16, payload: completePayload })) {
                 transferState.status = 'complete';
-                this.uiController.updateFileTransferStatus(transferId, "Upload complete. Waiting for peer confirmation.");
+                this.uiController.updateFileTransferStatus(transferId, "Upload complete."); // Updated message
                 this.uiController.hideFileTransferActions(transferId); // Hide cancel button
             } else {
                 throw new Error("Connection error sending completion message.");

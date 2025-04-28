@@ -6,7 +6,7 @@
  * showing/hiding different sections of the application, updating text content,
  * enabling/disabling controls, adding/removing items from lists,
  * displaying messages (including file transfers, actions, and clickable links), playing sounds, managing settings UI,
- * and binding event listeners to UI elements.
+ * managing the SAS verification pane, and binding event listeners to UI elements.
  * It acts as the presentation layer, controlled by the SessionManager.
  */
 class UIController {
@@ -58,6 +58,15 @@ class UIController {
         this.waitingResponseArea = document.getElementById('waiting-response-area'); // View shown while waiting for peer response
         this.waitingResponseText = document.getElementById('waiting-response-text'); // Text within waiting view
         this.cancelRequestButton = document.getElementById('cancel-request-button'); // Cancel button in waiting view
+
+        // SAS Verification Pane Elements
+        this.sasVerificationArea = document.getElementById('sas-verification-area');
+        this.sasDisplay = document.getElementById('sas-display');
+        this.sasConfirmButton = document.getElementById('sas-confirm-button');
+        this.sasDenyButton = document.getElementById('sas-deny-button');
+        this.sasCancelPendingButton = document.getElementById('sas-cancel-pending-button'); // NEW: Cancel button
+
+        // Active Chat Area Elements
         this.activeChatArea = document.getElementById('active-chat-area'); // View for an active chat session
         this.chatHeader = document.getElementById('chat-header'); // Header within active chat view
         this.peerIdentifierDisplay = document.getElementById('peer-identifier'); // Peer's ID display in chat header
@@ -69,7 +78,7 @@ class UIController {
 
         this.messageInputArea = document.getElementById('message-input-area'); // Container for input and send button
         this.attachButton = document.getElementById('attach-button'); // Attach button reference
-        this.emojiPickerButton = document.getElementById('emoji-picker-button'); // NEW: Emoji picker button
+        this.emojiPickerButton = document.getElementById('emoji-picker-button'); // Emoji picker button
         this.messageInput = document.getElementById('message-input'); // The message text input field
         this.sendButton = document.getElementById('send-button'); // Send message button
         this.disconnectButton = document.getElementById('disconnect-button'); // Disconnect button in chat header
@@ -84,7 +93,7 @@ class UIController {
         this.fileInput = document.getElementById('file-input'); // Hidden file input reference
 
         // Emoji Picker Panel
-        this.emojiPickerPanel = document.getElementById('emoji-picker-panel'); // NEW: Emoji picker panel
+        this.emojiPickerPanel = document.getElementById('emoji-picker-panel'); // Emoji picker panel
 
         // --- Audio Management ---
         // Object to hold preloaded Audio elements.
@@ -192,12 +201,12 @@ class UIController {
         if (this.infoArea) this.infoArea.style.display = 'none';
         if (this.waitingResponseArea) this.waitingResponseArea.style.display = 'none';
         if (this.settingsPane) this.settingsPane.style.display = 'none'; // Hide settings pane too
+        if (this.sasVerificationArea) this.sasVerificationArea.style.display = 'none'; // Hide SAS pane
         if (this.overlay) this.overlay.style.display = 'none'; // Hide overlay too
         // Also ensure the typing indicator is hidden when switching panes.
         this.hideTypingIndicator();
-        // --- NEW: Hide emoji picker when switching main panes ---
+        // Hide emoji picker when switching main panes
         if (this.emojiPickerPanel) this.emojiPickerPanel.style.display = 'none';
-        // --- END NEW ---
     }
 
     /**
@@ -228,13 +237,12 @@ class UIController {
         if (this.appContainer) this.appContainer.style.display = 'flex'; // Show the main layout
         if (this.myIdentifierDisplay) this.myIdentifierDisplay.textContent = myId; // Show ID in sidebar
         if (this.myIdentifierWelcome) this.myIdentifierWelcome.textContent = myId; // Show ID in welcome message
-        // --- Set Version Display ---
+        // Set Version Display
         if (this.appVersionDisplay && config && config.APP_VERSION) {
             this.appVersionDisplay.textContent = `Version: ${config.APP_VERSION}`;
         } else if (this.appVersionDisplay) {
             this.appVersionDisplay.textContent = 'Version: Unknown'; // Fallback
         }
-        // --- END ---
         this.showWelcomeMessage(); // Show the default pane
         this.setRegistrationControlsEnabled(false); // Disable registration controls
     }
@@ -254,6 +262,7 @@ class UIController {
         this.setIncomingRequestControlsEnabled(false); // Disable accept/deny
         this.setInfoControlsEnabled(false); // Disable info pane controls
         this.setWaitingControlsEnabled(false); // Disable waiting pane controls
+        this.setSasControlsEnabled(false); // Disable SAS controls
         this.focusPeerIdInput(); // Focus the input for starting a new chat
     }
 
@@ -274,6 +283,7 @@ class UIController {
         this.setChatControlsEnabled(false);
         this.setInfoControlsEnabled(false);
         this.setWaitingControlsEnabled(false);
+        this.setSasControlsEnabled(false); // Disable SAS controls
         this.setInitiationControlsEnabled(true); // Keep initiation enabled
     }
 
@@ -303,6 +313,7 @@ class UIController {
         this.setChatControlsEnabled(false);
         this.setIncomingRequestControlsEnabled(false);
         this.setWaitingControlsEnabled(false);
+        this.setSasControlsEnabled(false); // Disable SAS controls
         this.setInitiationControlsEnabled(true); // Keep initiation enabled
         // Focus the appropriate button
         const buttonToFocus = showRetry ? this.retryRequestButton : this.closeInfoButton;
@@ -328,14 +339,58 @@ class UIController {
         this.setChatControlsEnabled(false);
         this.setIncomingRequestControlsEnabled(false);
         this.setInfoControlsEnabled(false);
+        this.setSasControlsEnabled(false); // Disable SAS controls
         this.setInitiationControlsEnabled(true); // Keep initiation enabled
         // Focus the cancel button
         if (this.cancelRequestButton) { setTimeout(() => this.cancelRequestButton.focus(), 0); }
     }
 
     /**
+     * Shows the SAS verification pane with the overlay effect.
+     * @param {string} peerId - The peer ID this verification relates to.
+     * @param {string} sasString - The SAS string to display (e.g., "123 456").
+     */
+    showSasVerificationPane(peerId, sasString) {
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Showing SAS Verification Pane for ${peerId}`);
+        this.hideAllMainPanes(); // Hide other panes first
+        if (this.welcomeMessage) this.welcomeMessage.style.display = 'block'; // Ensure welcome is visible behind overlay
+        if (this.overlay) this.overlay.style.display = 'block'; // Show the overlay
+        if (this.sasVerificationArea) this.sasVerificationArea.style.display = 'block'; // Show the SAS pane on top
+        if (this.sasDisplay) this.sasDisplay.textContent = sasString || 'Error!'; // Display the SAS
+        // Store peerId in button datasets for event handlers
+        if (this.sasConfirmButton) this.sasConfirmButton.dataset.peerid = peerId;
+        if (this.sasDenyButton) this.sasDenyButton.dataset.peerid = peerId;
+        if (this.sasCancelPendingButton) this.sasCancelPendingButton.dataset.peerid = peerId; // Set peerId for cancel button too
+        // --- MODIFICATION: Hide Cancel button initially ---
+        if (this.sasCancelPendingButton) this.sasCancelPendingButton.style.display = 'none';
+        // --- END MODIFICATION ---
+        this.setSasControlsEnabled(true); // Enable confirm/deny buttons initially
+        // Disable other potentially active controls
+        this.setChatControlsEnabled(false);
+        this.setIncomingRequestControlsEnabled(false);
+        this.setInfoControlsEnabled(false);
+        this.setWaitingControlsEnabled(false);
+        this.setInitiationControlsEnabled(true); // Keep initiation enabled
+        // Focus the confirm button
+        if (this.sasConfirmButton) { setTimeout(() => this.sasConfirmButton.focus(), 0); }
+    }
+
+    /**
+     * Hides the SAS verification pane and the overlay.
+     * Typically called after confirmation/denial or when resetting the session.
+     */
+    hideSasVerificationPane() {
+        // Log UI state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Hiding SAS Verification Pane");
+        if (this.sasVerificationArea) this.sasVerificationArea.style.display = 'none';
+        if (this.overlay) this.overlay.style.display = 'none'; // Hide overlay too
+    }
+
+    /**
      * Shows the active chat pane for a specific peer.
      * Clears previous messages and focuses the message input field.
+     * IMPORTANT: Chat controls are initially DISABLED until SAS verification is complete.
      * (Overlay is not used for this pane).
      * @param {string} peerId - The identifier of the peer for the active chat.
      */
@@ -348,13 +403,26 @@ class UIController {
         this.clearMessageInput(); // Clear any old text in input
         this.clearMessages(); // Clear messages from previous chat
         this.setActiveSessionInList(peerId); // Highlight session in sidebar list
-        this.setChatControlsEnabled(true); // Enable message input, send, disconnect, attach
+        // Disable chat controls initially
+        this.setChatControlsEnabled(false); // Disable message input, send, disconnect, attach
         // Disable other potentially active controls
         this.setIncomingRequestControlsEnabled(false);
         this.setInfoControlsEnabled(false);
         this.setWaitingControlsEnabled(false);
+        this.setSasControlsEnabled(false); // Disable SAS controls
         this.setInitiationControlsEnabled(true); // Keep initiation enabled
-        this.focusMessageInput(); // Focus the message input field
+        // Don't focus input yet, wait for enableActiveChatControls
+    }
+
+    /**
+     * Enables the controls within the active chat area (input, send, etc.).
+     * Called by SessionManager after SAS verification is fully complete.
+     */
+    enableActiveChatControls() {
+        // Log action only if DEBUG is enabled.
+        if (config.DEBUG) console.log("UI: Enabling active chat controls.");
+        this.setChatControlsEnabled(true);
+        this.focusMessageInput(); // Now focus the input field
     }
 
     /**
@@ -378,6 +446,7 @@ class UIController {
         this.setIncomingRequestControlsEnabled(false);
         this.setInfoControlsEnabled(false);
         this.setWaitingControlsEnabled(false);
+        this.setSasControlsEnabled(false); // Disable SAS controls
     }
 
     // --- Settings Pane Management ---
@@ -403,6 +472,7 @@ class UIController {
         this.setIncomingRequestControlsEnabled(false);
         this.setInfoControlsEnabled(false);
         this.setWaitingControlsEnabled(false);
+        this.setSasControlsEnabled(false); // Disable SAS controls
         this.setInitiationControlsEnabled(true); // Keep initiation enabled
         // Focus the close button
         if (this.closeSettingsButton) { setTimeout(() => this.closeSettingsButton.focus(), 0); }
@@ -519,7 +589,7 @@ class UIController {
         this._setButtonState(this.disconnectButton, enabled, loadingState, "Disconnecting...");
         // Also handle the attach and emoji buttons
         if (this.attachButton) this.attachButton.disabled = !enabled || loadingState;
-        if (this.emojiPickerButton) this.emojiPickerButton.disabled = !enabled || loadingState; // NEW
+        if (this.emojiPickerButton) this.emojiPickerButton.disabled = !enabled || loadingState;
     }
 
 
@@ -542,6 +612,47 @@ class UIController {
         // Log control state change only if DEBUG is enabled.
         if (config.DEBUG) console.log(`UI: Setting Waiting Controls Enabled: ${enabled}, Loading: ${loadingState}`);
         this._setButtonState(this.cancelRequestButton, enabled, loadingState, "Cancelling...");
+    }
+
+    /**
+     * Enables/disables SAS verification pane controls (Confirm, Deny, Cancel), optionally showing loading state.
+     * Manages visibility of Confirm/Deny vs Cancel button.
+     * @param {boolean} enabled - True to enable initial state (Confirm/Deny), false to disable all or show Cancel.
+     * @param {boolean} [loadingState=false] - True to show loading text on the active button.
+     * @param {boolean} [showCancel=false] - True to hide Confirm/Deny and show Cancel (enabled).
+     */
+    setSasControlsEnabled(enabled, loadingState = false, showCancel = false) {
+        // Log control state change only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Setting SAS Controls Enabled: ${enabled}, Loading: ${loadingState}, ShowCancel: ${showCancel}`);
+
+        if (showCancel) {
+            // Show Cancel, hide Confirm/Deny
+            if (this.sasConfirmButton) this.sasConfirmButton.style.display = 'none';
+            if (this.sasDenyButton) this.sasDenyButton.style.display = 'none';
+            if (this.sasCancelPendingButton) {
+                this.sasCancelPendingButton.style.display = 'inline-block';
+                // Enable Cancel unless loadingState is true (e.g., during cancellation processing)
+                this._setButtonState(this.sasCancelPendingButton, enabled, loadingState, "Cancelling...");
+            }
+        } else {
+            // Show Confirm/Deny, hide Cancel
+            if (this.sasCancelPendingButton) this.sasCancelPendingButton.style.display = 'none';
+            if (this.sasConfirmButton) {
+                this.sasConfirmButton.style.display = 'inline-block';
+                this._setButtonState(this.sasConfirmButton, enabled, loadingState, "Confirming...");
+            }
+            if (this.sasDenyButton) {
+                this.sasDenyButton.style.display = 'inline-block';
+                this._setButtonState(this.sasDenyButton, enabled, loadingState, "Aborting...");
+            }
+        }
+
+        // If explicitly disabling all (e.g., on reset), ensure all are disabled regardless of visibility
+        if (!enabled && !showCancel) {
+             this._setButtonState(this.sasConfirmButton, false);
+             this._setButtonState(this.sasDenyButton, false);
+             this._setButtonState(this.sasCancelPendingButton, false);
+        }
     }
     // -----------------------------------------
 
@@ -699,12 +810,11 @@ class UIController {
         const textNode = document.createTextNode(` ${text}`); // Add leading space for separation
         textSpan.appendChild(textNode);
 
-        // --- Linkify URLs in regular messages ---
+        // Linkify URLs in regular messages
         // Only linkify for 'peer' and 'own' message types
         if (type === 'peer' || type === 'own') {
             this._linkifyTextNode(textNode);
         }
-        // --- END ---
 
         // Append elements to message container
         messageDiv.appendChild(timestampSpan);
@@ -876,7 +986,7 @@ class UIController {
     /** Clears all messages from the message display area. */
     clearMessages() { if (this.messageArea) this.messageArea.innerHTML = ''; }
 
-    // --- NEW: File Transfer Message Display ---
+    // --- File Transfer Message Display ---
 
     /**
      * Adds a file transfer status message block to the message area.
@@ -1232,7 +1342,7 @@ class UIController {
     }
     // --------------------------------
 
-    // --- Info Pane Visibility Checks ---
+    // --- Info/SAS Pane Visibility Checks ---
 
     /**
      * Checks if the info pane is currently visible and associated with the specified peer.
@@ -1254,6 +1364,28 @@ class UIController {
      */
     isAnyInfoPaneVisible() {
         return this.infoArea ? this.infoArea.style.display !== 'none' : false;
+    }
+
+    /**
+     * Checks if the SAS verification pane is currently visible and associated with the specified peer.
+     * @param {string} peerId - The peer ID to check against the SAS pane's data.
+     * @returns {boolean} True if the SAS pane is visible and matches the peerId, false otherwise.
+     */
+    isSasPaneVisibleFor(peerId) {
+        if (!this.sasVerificationArea || this.sasVerificationArea.style.display === 'none') {
+            return false; // Pane is not visible
+        }
+        // Check the dataset peerid on the confirm button (or deny button)
+        const storedPeerId = this.sasConfirmButton?.dataset?.peerid || this.sasDenyButton?.dataset?.peerid || this.sasCancelPendingButton?.dataset?.peerid;
+        return storedPeerId === peerId; // Return true if visible and peerId matches
+    }
+
+    /**
+     * Checks if the SAS verification pane is currently visible, regardless of the associated peer.
+     * @returns {boolean} True if the SAS pane's display style is not 'none', false otherwise.
+     */
+    isAnySasPaneVisible() {
+        return this.sasVerificationArea ? this.sasVerificationArea.style.display !== 'none' : false;
     }
     // --------------------------------------
 
@@ -1387,7 +1519,7 @@ class UIController {
         }
     }
 
-    // --- NEW: File Transfer Bindings ---
+    // --- File Transfer Bindings ---
 
     /**
      * Binds a handler function to the attach button's click event.
@@ -1502,7 +1634,63 @@ class UIController {
     }
     // -----------------------------
 
-    // --- NEW: Emoji Picker Bindings ---
+    // --- SAS Verification Bindings ---
+    /**
+     * Binds a handler function to the SAS Confirm button's click event.
+     * Extracts the peerId from the button's dataset.
+     * @param {function(string): void} handler - The function to call with the peerId.
+     */
+    bindSasConfirmButton(handler) {
+        if (this.sasConfirmButton) {
+            this.sasConfirmButton.addEventListener('click', (event) => {
+                const peerId = event.currentTarget.dataset.peerid;
+                if (peerId) {
+                    handler(peerId);
+                } else {
+                    console.error("SAS Confirm button clicked, but no peerId found in dataset.");
+                }
+            });
+        }
+    }
+
+    /**
+     * Binds a handler function to the SAS Deny button's click event.
+     * Extracts the peerId from the button's dataset.
+     * @param {function(string): void} handler - The function to call with the peerId.
+     */
+    bindSasDenyButton(handler) {
+        if (this.sasDenyButton) {
+            this.sasDenyButton.addEventListener('click', (event) => {
+                const peerId = event.currentTarget.dataset.peerid;
+                if (peerId) {
+                    handler(peerId);
+                } else {
+                    console.error("SAS Deny button clicked, but no peerId found in dataset.");
+                }
+            });
+        }
+    }
+
+    /**
+     * NEW: Binds a handler function to the SAS Cancel Pending button's click event.
+     * Extracts the peerId from the button's dataset.
+     * @param {function(string): void} handler - The function to call with the peerId.
+     */
+    bindSasCancelPendingButton(handler) {
+        if (this.sasCancelPendingButton) {
+            this.sasCancelPendingButton.addEventListener('click', (event) => {
+                const peerId = event.currentTarget.dataset.peerid;
+                if (peerId) {
+                    handler(peerId);
+                } else {
+                    console.error("SAS Cancel Pending button clicked, but no peerId found in dataset.");
+                }
+            });
+        }
+    }
+    // --- END SAS Bindings ---
+
+    // --- Emoji Picker Bindings ---
     /**
      * Binds a handler function to the emoji picker button's click event.
      * @param {function} handler - The function to call when the button is clicked (likely toggleEmojiPicker).
@@ -1515,9 +1703,9 @@ class UIController {
             });
         }
     }
-    // --- END NEW ---
+    // --- END Emoji Picker Bindings ---
 
-    // --- NEW: Linkify Helper ---
+    // --- Linkify Helper ---
     /**
      * Finds URLs within a given text node and replaces them with clickable links.
      * Modifies the DOM by replacing the text node with a fragment containing text nodes and <a> elements.
@@ -1577,9 +1765,9 @@ class UIController {
         // Log linkification only if DEBUG is enabled.
         if (config.DEBUG) console.log("UI: Linkified URLs in message text.");
     }
-    // --- END NEW ---
+    // --- END Linkify Helper ---
 
-    // --- NEW: Emoji Picker Methods ---
+    // --- Emoji Picker Methods ---
     /**
      * Populates the emoji picker panel with clickable emoji spans.
      * @private
@@ -1698,7 +1886,7 @@ class UIController {
         // Log insertion only if DEBUG is enabled.
         if (config.DEBUG) console.log(`UI: Inserted emoji '${emoji}' at position ${start}.`);
     }
-    // --- END NEW ---
+    // --- END Emoji Picker Methods ---
 
 
     // --- Utility ---
@@ -1723,6 +1911,10 @@ class UIController {
             this.acceptButton, this.denyButton,
             this.infoArea, this.infoMessage, this.closeInfoButton, this.retryRequestButton,
             this.waitingResponseArea, this.waitingResponseText, this.cancelRequestButton,
+            // SAS Verification Pane Elements
+            this.sasVerificationArea, this.sasDisplay, this.sasConfirmButton, this.sasDenyButton,
+            this.sasCancelPendingButton, // Added SAS Cancel button
+            // Active Chat Area Elements
             this.activeChatArea, this.chatHeader,
             this.peerIdentifierDisplay, this.messageArea,
             this.typingIndicatorArea, this.typingIndicatorText,

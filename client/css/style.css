@@ -18,18 +18,19 @@
     --bg-button-hover: #5a5a63;         /* Button background on hover */
     --bg-button-active: #4a4a53;        /* Button background when clicked */
     --bg-button-disabled: #444444;      /* Button background when disabled */
-    --bg-button-danger: #8f3040;        /* Background for danger/destructive buttons (e.g., disconnect, reject, cancel) */
+    --bg-button-danger: #8f3040;        /* Background for danger/destructive buttons (e.g., disconnect, reject, cancel, SAS deny/cancel) */
     --bg-button-danger-hover: #a84050;  /* Danger button background on hover */
-    --bg-button-success: #3f6844;       /* NEW: Background for success buttons (e.g., accept) */
-    --bg-button-success-hover: #4f8054; /* NEW: Success button background on hover */
+    --bg-button-success: #3f6844;       /* Background for success buttons (e.g., accept, SAS confirm) */
+    --bg-button-success-hover: #4f8054; /* Success button background on hover */
     --bg-list-hover: #2a2d2e;           /* Background for session list items on hover */
     --bg-list-active: #094771;          /* Background for the active session list item */
-    --bg-info: #333322;                 /* Background for informational areas (e.g., incoming request) */
+    --bg-info: #333322;                 /* Background for informational areas (e.g., incoming request, SAS pane) */
     --bg-danger-info: #442a31;          /* Background for error/denial info areas */
     --bg-settings: #2d2d30;             /* Background for the settings pane */
     --bg-overlay: rgba(0, 0, 0, 0.6);   /* Background for the overlay */
     --bg-emoji-panel: #2d2d30;          /* NEW: Background for emoji picker */
     --bg-emoji-hover: #3f3f46;          /* NEW: Background for emoji on hover */
+    --bg-sas-display: #1a1a1a;          /* NEW: Background for the SAS code display */
 
     /* Text Colors */
     --text-light: #cccccc;              /* Primary light text color */
@@ -45,16 +46,18 @@
     --text-button-disabled: #888888;    /* Text color for disabled buttons */
     --text-typing: #a0a0a0;             /* Color for the 'is typing...' indicator text */
     --text-file-info: #b0b0b0;          /* NEW: Color for file info text */
+    --text-sas-display: #e0e0e0;        /* NEW: Text color for the SAS code */
 
     /* Border Colors */
     --border-color: #333333;            /* Default border color */
     --border-color-input: #555555;      /* Border color for input fields */
     --border-color-danger: #a84050;     /* Border color for danger elements */
-    --border-color-success: #4f8054;    /* NEW: Border color for success elements */
+    --border-color-success: #4f8054;    /* Border color for success elements */
     --border-color-info: #666;          /* Border color for info elements */
     --border-color-settings: #444;      /* Border color for settings pane */
     --border-color-file: #4a4a55;       /* NEW: Border color for file transfer messages */
     --border-color-emoji-panel: #444;   /* NEW: Border color for emoji picker */
+    --border-color-sas-display: #444;   /* NEW: Border color for SAS display */
 
     /* Accent Colors */
     --accent-red: #f44336;              /* Red accent (e.g., notification dot) */
@@ -371,7 +374,7 @@ body {
     right: 0;
     bottom: 0;
     background-color: var(--bg-overlay); /* Use variable for semi-transparent background */
-    z-index: 5; /* Position it above welcome, below info/request/settings */
+    z-index: 5; /* Position it above welcome, below info/request/settings/SAS */
 }
 /* --- End Overlay Styling --- */
 
@@ -510,6 +513,95 @@ body {
 #waiting-response-area button {
     margin-top: 15px; /* Space above the button */
 }
+
+/* --- SAS Verification Area Styling --- */
+#sas-verification-area {
+    display: none; /* Hidden by default */
+    padding: 25px 30px; /* Inner spacing */
+    border: 1px solid var(--border-color-info); /* Use info border color */
+    background-color: var(--bg-info); /* Use info background color */
+    color: var(--text-light); /* Standard light text */
+    text-align: center; /* Center text */
+    max-width: 500px; /* Limit width */
+    width: 90%; /* Responsive width */
+    border-radius: 5px; /* Rounded corners */
+    position: absolute; /* Position relative to #main-content */
+    top: 50%;           /* Center vertically */
+    left: 50%;          /* Center horizontally */
+    transform: translate(-50%, -50%); /* Fine-tune centering */
+    z-index: 10; /* Position it above the overlay */
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3); /* Add a subtle shadow */
+}
+
+#sas-verification-area h3 {
+    margin-top: 0;
+    margin-bottom: 15px;
+    font-weight: 300;
+    font-size: 1.4em;
+    color: var(--text-light-strong);
+}
+
+#sas-verification-area p {
+    margin-bottom: 15px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+}
+
+#sas-display {
+    display: block; /* Make it block level */
+    font-family: 'Courier New', Courier, monospace; /* Monospace font */
+    font-size: 2.2em; /* Larger font size */
+    font-weight: bold;
+    letter-spacing: 3px; /* Add spacing between characters */
+    color: var(--text-sas-display); /* Specific text color */
+    background-color: var(--bg-sas-display); /* Darker background */
+    padding: 15px 20px; /* Padding */
+    border: 1px solid var(--border-color-sas-display); /* Border */
+    border-radius: 4px; /* Rounded corners */
+    margin: 20px auto; /* Vertical and horizontal centering */
+    max-width: 200px; /* Limit width */
+    user-select: text; /* Allow user to select/copy the code */
+}
+
+/* Container for SAS buttons */
+#sas-verification-area .sas-buttons {
+    margin-top: 15px; /* Space above the buttons */
+}
+
+/* Individual SAS buttons */
+#sas-verification-area button {
+    margin: 5px 8px; /* Vertical and horizontal margins */
+    min-width: 120px; /* Ensure buttons have decent width */
+}
+
+/* Style the Confirm button using success colors */
+#sas-confirm-button {
+    background-color: var(--bg-button-success);
+    border-color: var(--border-color-success);
+}
+#sas-confirm-button:hover {
+    background-color: var(--bg-button-success-hover);
+}
+
+/* Style the Deny button using danger colors */
+#sas-deny-button {
+    background-color: var(--bg-button-danger);
+    border-color: var(--border-color-danger);
+}
+#sas-deny-button:hover {
+    background-color: var(--bg-button-danger-hover);
+}
+
+/* NEW: Style the Cancel Pending button using danger colors */
+#sas-cancel-pending-button {
+    background-color: var(--bg-button-danger);
+    border-color: var(--border-color-danger);
+    /* display: none; */ /* Initially hidden via inline style in HTML */
+}
+#sas-cancel-pending-button:hover {
+    background-color: var(--bg-button-danger-hover);
+}
+/* --- END SAS Verification Area Styling --- */
 
 
 /* Active Chat Area */
@@ -976,8 +1068,8 @@ select:disabled {
 }
 
 /* Base styles for all buttons (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button) {
+/* MODIFIED: Added #attach-button, #emoji-picker-button, #sas-confirm-button, #sas-deny-button, #sas-cancel-pending-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button) {
     padding: 8px 15px; /* Default padding */
     cursor: pointer; /* Indicate interactivity */
     border: 1px solid var(--border-color); /* Default border */
@@ -988,19 +1080,19 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     transition: background-color 0.15s ease, border-color 0.15s ease; /* Smooth transitions */
 }
 /* Styles for buttons on hover (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):hover {
+/* MODIFIED: Added #attach-button, #emoji-picker-button, #sas-confirm-button, #sas-deny-button, #sas-cancel-pending-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):hover {
     background-color: var(--bg-button-hover); /* Hover background color */
     border-color: #666; /* Slightly lighter border */
 }
 /* Styles for buttons when actively being clicked (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):active {
+/* MODIFIED: Added #attach-button, #emoji-picker-button, #sas-confirm-button, #sas-deny-button, #sas-cancel-pending-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):active {
      background-color: var(--bg-button-active); /* Active background color */
 }
 /* Styles for disabled buttons (excluding icon buttons and disconnect). */
-/* MODIFIED: Added #attach-button, #emoji-picker-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):disabled {
+/* MODIFIED: Added #attach-button, #emoji-picker-button, #sas-confirm-button, #sas-deny-button, #sas-cancel-pending-button to the exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):disabled {
     background-color: var(--bg-button-disabled); /* Disabled background */
     border-color: var(--border-color-input); /* Use input border color */
     color: var(--text-button-disabled); /* Disabled text color */
@@ -1008,7 +1100,7 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     opacity: 0.6; /* Reduce opacity */
 }
 
-/* --- NEW: Emoji Picker Button Styling --- */
+/* --- Emoji Picker Button Styling --- */
 #emoji-picker-button {
     background: none;
     border: 1px solid transparent;
@@ -1036,9 +1128,9 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
     cursor: not-allowed;
     opacity: 0.5;
 }
-/* --- END NEW --- */
+/* --- END Emoji Picker Button Styling --- */
 
-/* --- NEW: Emoji Picker Panel Styling --- */
+/* --- Emoji Picker Panel Styling --- */
 .emoji-picker {
     display: none; /* Hidden by default */
     position: absolute; /* Position relative to nearest positioned ancestor (likely #main-content or body) */
@@ -1066,7 +1158,7 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
 .emoji-picker span:hover {
     background-color: var(--bg-emoji-hover);
 }
-/* --- END NEW --- */
+/* --- END Emoji Picker Panel Styling --- */
 
 
 /* Dark Scrollbar Styling (WebKit/Blink - Chrome, Safari, Edge, Opera) */

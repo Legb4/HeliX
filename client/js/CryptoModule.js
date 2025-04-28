@@ -4,6 +4,7 @@
  * Handles all client-side cryptographic operations using the Web Crypto API.
  * This includes generating ECDH key pairs for session key agreement,
  * deriving shared secrets and session keys using HKDF, encrypting/decrypting data with AES-GCM,
+ * deriving Short Authentication Strings (SAS) for connection verification,
  * and handling key import/export.
  * This version implements Perfect Forward Secrecy (PFS) using ECDH.
  */
@@ -28,6 +29,8 @@ class CryptoModule {
         this.privateKey = null;
         // Holds the derived AES-GCM session key (CryptoKey object) after successful ECDH key agreement.
         this.derivedSessionKey = null;
+        // Holds the exported Base64 representation of the public key, cached for SAS derivation.
+        this.publicKeyBase64 = null; // Cache for SAS
 
         // --- Algorithm Configuration ---
         // Configuration for ECDH (Elliptic Curve Diffie-Hellman) key generation and derivation.
@@ -75,6 +78,7 @@ class CryptoModule {
     /**
      * Generates a new ephemeral ECDH public/private key pair asynchronously.
      * Stores the generated keys in `this.publicKey` and `this.privateKey`.
+     * Also exports and caches the public key Base64 representation.
      * @returns {Promise<boolean>} True if key generation was successful, false otherwise.
      */
     async generateECDHKeys() {
@@ -92,9 +96,14 @@ class CryptoModule {
             // Store the generated keys.
             this.publicKey = keyPair.publicKey;
             this.privateKey = keyPair.privateKey;
+            // Export and cache the public key Base64 immediately after generation
+            this.publicKeyBase64 = await this.exportPublicKeyBase64Internal();
+            if (!this.publicKeyBase64) {
+                throw new Error("Failed to export and cache public key after generation.");
+            }
             // Log success only if DEBUG is enabled.
             if (config.DEBUG) {
-                console.log("Ephemeral ECDH key pair generated successfully.");
+                console.log("Ephemeral ECDH key pair generated and public key cached successfully.");
             }
             return true; // Indicate success
         } catch (error) {
@@ -103,45 +112,57 @@ class CryptoModule {
             // Clear any potentially partially generated keys on error.
             this.publicKey = null;
             this.privateKey = null;
+            this.publicKeyBase64 = null; // Clear cache
             return false; // Indicate failure
         }
     }
 
     /**
+     * Internal helper to export the public key to Base64 SPKI format.
+     * @returns {Promise<string|null>} Base64 encoded key or null on failure.
+     * @private Internal use, called by generateECDHKeys and getPublicKeyBase64.
+     */
+    async exportPublicKeyBase64Internal() {
+        if (!this.publicKey) {
+            console.error("Cannot export public key: No public key generated or stored.");
+            return null;
+        }
+        try {
+            const exportedSpki = await window.crypto.subtle.exportKey("spki", this.publicKey);
+            return this.arrayBufferToBase64(exportedSpki);
+        } catch (error) {
+            console.error("Error exporting ECDH public key:", error);
+            return null;
+        }
+    }
+
+
+    /**
      * Exports the stored public ECDH key to the SPKI format and encodes it as Base64.
+     * Uses the cached version if available.
      * SPKI (SubjectPublicKeyInfo) is a standard format suitable for sharing public keys.
      * Base64 encoding makes it suitable for transmission in JSON.
      * @returns {Promise<string|null>} The Base64 encoded public key, or null on failure/if no key exists.
      */
     async getPublicKeyBase64() {
-        // Ensure a public key exists before trying to export.
-        if (!this.publicKey) {
-            // Always log this error as it indicates a programming mistake.
-            console.error("Cannot export public key: No public key generated or stored.");
-            return null;
+        // Return cached key if available
+        if (this.publicKeyBase64) {
+            // Log cache hit only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("Returning cached ECDH public key Base64.");
+            }
+            return this.publicKeyBase64;
         }
+        // If not cached (shouldn't happen if generateECDHKeys succeeded), try exporting again.
         // Log export attempt only if DEBUG is enabled.
         if (config.DEBUG) {
             console.log("Exporting ECDH public key to Base64 (SPKI format)...");
         }
-        try {
-            // Export the key in SPKI format (returns an ArrayBuffer).
-            const exportedSpki = await window.crypto.subtle.exportKey(
-                "spki", // Standard format for public keys
-                this.publicKey
-            );
-            // Convert the ArrayBuffer to a Base64 string.
-            const base64Key = this.arrayBufferToBase64(exportedSpki);
-            // Log success (truncated key) only if DEBUG is enabled.
-            if (config.DEBUG) {
-                console.log("ECDH Public key exported successfully (Base64):", base64Key.substring(0, 30) + "..."); // Log prefix
-            }
-            return base64Key;
-        } catch (error) {
-            // Always log errors.
-            console.error("Error exporting ECDH public key:", error);
-            return null;
+        const base64Key = await this.exportPublicKeyBase64Internal();
+        if (base64Key && config.DEBUG) {
+            console.log("ECDH Public key exported successfully (Base64):", base64Key.substring(0, 30) + "..."); // Log prefix
         }
+        return base64Key;
     }
 
     /**
@@ -280,14 +301,7 @@ class CryptoModule {
         }
     }
 
-    // --- RSA Methods Removed ---
-    // encryptRSA and decryptRSA are no longer needed with ECDH key agreement.
-
     // --- AES Symmetric Key Handling (Now uses derivedSessionKey) ---
-
-    // generateSymmetricKey is removed - the key is now derived, not generated per message.
-    // exportSymmetricKeyBase64 is removed - the derived key isn't exported directly.
-    // importSymmetricKeyBase64 is removed - the key is derived, not imported after RSA decryption.
 
     /**
      * Encrypts data (e.g., chat message text or challenge data) using AES-GCM
@@ -375,7 +389,7 @@ class CryptoModule {
     }
     // --------------------------------------
 
-    // --- Hashing (Remains the same, potentially useful for challenge/info in KDF later) ---
+    // --- Hashing ---
     /**
      * Hashes data using SHA-256.
      * @param {ArrayBuffer | ArrayBufferView} data - The data to hash.
@@ -401,6 +415,82 @@ class CryptoModule {
         }
     }
 
+    // --- Short Authentication String (SAS) Derivation ---
+    /**
+     * Derives a Short Authentication String (SAS) for verifying the connection.
+     * It concatenates the Base64 representations of the local and peer public keys (sorted),
+     * hashes the result using SHA-256, and formats the first few bytes of the hash
+     * into a human-readable string (e.g., 6 digits).
+     * @param {CryptoKey} peerPublicKeyObject - The imported CryptoKey object of the peer's public ECDH key.
+     * @returns {Promise<string|null>} The formatted SAS string (e.g., "123 456") or null on failure.
+     */
+    async deriveSas(peerPublicKeyObject) {
+        // Log SAS derivation attempt only if DEBUG is enabled.
+        if (config.DEBUG) {
+            console.log("Deriving Short Authentication String (SAS)...");
+        }
+        try {
+            // 1. Get own public key (should be cached).
+            const localPublicKeyBase64 = await this.getPublicKeyBase64();
+            if (!localPublicKeyBase64) {
+                throw new Error("Local public key not available for SAS derivation.");
+            }
+
+            // 2. Export the peer's public key to Base64 SPKI format.
+            const peerSpkiBuffer = await window.crypto.subtle.exportKey("spki", peerPublicKeyObject);
+            const peerPublicKeyBase64 = this.arrayBufferToBase64(peerSpkiBuffer);
+            if (!peerPublicKeyBase64) {
+                throw new Error("Failed to export peer public key for SAS derivation.");
+            }
+
+            // 3. Concatenate keys consistently: Sort lexicographically to ensure both clients get the same input.
+            const keys = [localPublicKeyBase64, peerPublicKeyBase64];
+            keys.sort(); // Sort alphabetically
+            const concatenatedKeys = keys[0] + keys[1];
+            // Log concatenated keys only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log("Concatenated Keys for SAS (sorted):", concatenatedKeys.substring(0, 30) + "...", concatenatedKeys.slice(-30));
+            }
+
+            // 4. Encode the concatenated string to UTF-8 ArrayBuffer.
+            const keyBuffer = this.encodeText(concatenatedKeys);
+
+            // 5. Hash the buffer using SHA-256.
+            const hashBuffer = await this.hashData(keyBuffer);
+            if (!hashBuffer || hashBuffer.byteLength < 4) { // Ensure hashBuffer is valid and long enough
+                throw new Error("Failed to hash concatenated keys for SAS or hash too short.");
+            }
+
+            // 6. Format the hash into a human-readable SAS (e.g., 6 digits).
+            // --- CORRECTION: Create DataView over the original hashBuffer ---
+            const dataView = new DataView(hashBuffer);
+            // --- END CORRECTION ---
+
+            // Read the first 4 bytes (32 bits) as an unsigned integer (Big Endian).
+            // We only need 20 bits for 0-999999, but reading 32 is standard.
+            const numericValue = dataView.getUint32(0, false); // Read 32 bits BE
+
+            // Take the number modulo 1,000,000 to get a 6-digit number (000000 to 999999).
+            const sixDigitNumber = numericValue % 1000000;
+
+            // Format as "XXX YYY" with leading zeros if necessary.
+            const formattedSas = sixDigitNumber.toString().padStart(6, '0');
+            const finalSas = `${formattedSas.substring(0, 3)} ${formattedSas.substring(3, 6)}`;
+
+            // Log derived SAS only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log(`Derived SAS: ${finalSas}`);
+            }
+            return finalSas;
+
+        } catch (error) {
+            // Always log errors during SAS derivation.
+            console.error("Error deriving SAS:", error);
+            return null;
+        }
+    }
+    // --- END SAS Derivation ---
+
     // --- Key Wiping ---
     /**
      * Clears the stored ECDH public/private keys and the derived AES session key from memory.
@@ -414,6 +504,7 @@ class CryptoModule {
         this.publicKey = null;
         this.privateKey = null;
         this.derivedSessionKey = null; // Also clear the derived key
+        this.publicKeyBase64 = null; // Clear cached public key
         // Potentially add memory clearing techniques if supported/needed,
         // but setting to null removes the primary reference.
         // Log completion only if DEBUG is enabled.
@@ -422,7 +513,7 @@ class CryptoModule {
         }
     }
 
-    // --- Helper Functions (Remain the same) ---
+    // --- Helper Functions ---
 
     /**
      * Converts an ArrayBuffer to a Base64 encoded string.
@@ -456,7 +547,7 @@ class CryptoModule {
         return bytes.buffer;
     }
 
-    // --- Text Encoding/Decoding Helpers (Remain the same) ---
+    // --- Text Encoding/Decoding Helpers ---
 
     /**
      * Encodes a JavaScript string into a UTF-8 ArrayBuffer.

@@ -5,7 +5,8 @@
  * Manages the state of the session (e.g., initiating, active, denied),
  * holds cryptographic keys relevant to this session (via its own CryptoModule instance
  * implementing ECDH for PFS), stores message history, handles timeouts,
- * processes incoming messages for this peer, and manages file transfer states.
+ * processes incoming messages for this peer, manages file transfer states,
+ * and handles Short Authentication String (SAS) verification.
  */
 class Session {
     /**
@@ -46,11 +47,17 @@ class Session {
         this.typingIndicatorTimeoutId = null;
         // ---------------------------------
 
-        // --- NEW: File Transfer State ---
+        // --- File Transfer State ---
         // Map storing the state of active file transfers for this session, keyed by transferId.
         // Example state: { file: File, status: string, progress: number, fileName: string, fileSize: number, fileType: string, isSender: boolean, senderId?: string }
         this.transferStates = new Map();
         // --------------------------------
+
+        // --- SAS Verification State ---
+        this.sas = null; // Stores the derived SAS string for this session.
+        this.localSasConfirmed = false; // Tracks if the local user clicked "Confirm Match".
+        this.peerSasConfirmed = false; // Tracks if the peer sent their confirmation message.
+        // -----------------------------------
 
         // --- Payload Size Limits (for incoming Base64 strings) ---
         // Define maximum acceptable lengths for various Base64 encoded fields received from the network.
@@ -58,7 +65,7 @@ class Session {
         this.MAX_PUBLIC_KEY_LENGTH = 512; // Generous limit for Base64 SPKI P-256 key (~120 bytes raw -> ~160 Base64)
         this.MAX_IV_LENGTH = 32;          // Generous limit for Base64 IV (12 bytes raw -> 16 Base64)
         this.MAX_ENCRYPTED_DATA_LENGTH = 1024 * 128; // Limit for Base64 encrypted data (challenge, response, message) - 128KB Base64 (~96KB raw)
-        // NEW: Limit for file transfer metadata (adjust as needed)
+        // Limit for file transfer metadata (adjust as needed)
         this.MAX_FILENAME_LENGTH = 255;
         this.MAX_FILETYPE_LENGTH = 100;
         // Note: Chunk data size is implicitly limited by WebSocket message size limit on server and client.
@@ -91,7 +98,7 @@ class Session {
 
     /**
      * Resets the session state, clearing keys, challenges, messages, timeouts,
-     * and file transfer states.
+     * file transfer states, and SAS verification status.
      * Called when a session ends, is denied, times out, or encounters a critical error.
      */
     resetState() {
@@ -117,10 +124,14 @@ class Session {
          this.messages = []; // Clear message history.
          this.peerIsTyping = false; // Reset peer typing status.
 
-         // --- NEW: Clear File Transfer States ---
+         // Clear File Transfer States
          // Note: Actual cleanup (DB, Object URLs) is handled by SessionManager calling resetSession
          this.transferStates.clear();
-         // ---------------------------------------
+
+         // Clear SAS State
+         this.sas = null;
+         this.localSasConfirmed = false;
+         this.peerSasConfirmed = false;
     }
 
     /**
@@ -157,7 +168,7 @@ class Session {
         // No console log here by default, UIController handles display.
     }
 
-    // --- NEW: File Transfer State Management ---
+    // --- File Transfer State Management ---
 
     /**
      * Adds or updates the state data for a specific file transfer.
@@ -265,7 +276,7 @@ class Session {
     /**
      * Processes an incoming message payload relevant to this specific session.
      * Routes the message to the appropriate internal handler based on its type.
-     * Handles the ECDH key exchange and derivation logic.
+     * Handles the ECDH key exchange, derivation, and SAS confirmation logic.
      * NOTE: File transfer messages (12-17) are handled by SessionManager directly.
      * @param {number} type - The message type identifier (e.g., 2 for ACCEPT, 8 for MESSAGE).
      * @param {object} payload - The message payload object.
@@ -287,7 +298,8 @@ class Session {
                 case 4: return await this._handlePublicKeyResponse(payload, manager); // Peer sent their public key (response to our accept OR our request)
                 case 5: return await this._handleKeyConfirmationChallenge(payload, manager); // Peer sent encrypted challenge
                 case 6: return await this._handleKeyConfirmationResponse(payload, manager); // Peer sent response to our challenge
-                case 7: return this._handleSessionEstablished(payload, manager); // Peer confirmed session establishment
+                case 7: return this._handleSessionEstablished(payload, manager); // Peer confirmed session establishment (now triggers SAS)
+                case 7.1: return this._handleSasConfirmation(payload, manager); // Peer confirmed SAS match
                 case 9: return this._handleSessionEnd(payload, manager); // Peer initiated session end
 
                 // Data Message
@@ -531,6 +543,7 @@ class Session {
     /**
      * Handles KEY_CONFIRMATION_RESPONSE (Type 6) message from the peer (Initiator -> Responder).
      * Decrypts the response using the derived session key and verifies it matches the original challenge sent.
+     * If successful, requests sending Type 7 (which will then trigger SAS locally).
      * @param {object} payload - Expected: { iv: string (Base64), encryptedResponse: string (Base64) }
      * @param {SessionManager} manager - SessionManager instance.
      * @returns {Promise<object>} Action object: { action: 'SEND_TYPE_7' } on success, { action: 'RESET', reason: string } on failure/mismatch.
@@ -589,9 +602,15 @@ class Session {
             // Log success only if DEBUG is enabled.
             if (config.DEBUG) console.log("Challenge response verified successfully!");
             this.challengeSent = null; // Clear the sent challenge.
-            // Update state and request SessionManager send the final confirmation (Type 7).
-            this.updateState(manager.STATE_HANDSHAKE_COMPLETE); // Responder considers handshake complete here
-            return { action: 'SEND_TYPE_7' };
+
+            // --- CORRECTION: Trigger sending Type 7 ---
+            // After successful verification, the Responder needs to send Type 7
+            // to signal the Initiator that the crypto handshake is done.
+            // The SAS calculation for the Responder will happen *after* sending Type 7.
+            // this.updateState(manager.STATE_HANDSHAKE_COMPLETE); // OLD state update
+            return { action: 'SEND_TYPE_7' }; // Request SessionManager send Type 7
+            // --- END CORRECTION ---
+
         } catch (error) {
              // Always log errors during response handling.
              console.error(`Session [${this.peerId}] Error handling Type 6 (Response):`, error);
@@ -602,29 +621,59 @@ class Session {
 
     /**
      * Handles SESSION_ESTABLISHED (Type 7) message from the peer (Responder -> Initiator).
-     * Marks the session as active from the Initiator's perspective.
+     * Marks the handshake as complete from the Initiator's perspective and triggers SAS calculation/display.
      * @param {object} payload - Expected: { message: string } (optional confirmation message)
      * @param {SessionManager} manager - SessionManager instance.
-     * @returns {object} Action object: { action: 'SESSION_ACTIVE' }
+     * @returns {object} Action object: { action: 'CALCULATE_AND_SHOW_SAS' }
      */
     _handleSessionEstablished(payload, manager) {
         // This is received by the Initiator
         // Ensure we were expecting this state transition (after sending Type 6)
         if (this.state !== manager.STATE_AWAITING_FINAL_CONFIRMATION && this.state !== manager.STATE_RECEIVED_CHALLENGE) {
              // Always log unexpected state warnings.
-             console.warn(`Session [${this.peerId}] Received Type 7 in unexpected state ${this.state}. Proceeding to ACTIVE.`);
+             console.warn(`Session [${this.peerId}] Received Type 7 in unexpected state ${this.state}. Proceeding to SAS verification.`);
         }
-        // Update state to active.
-        this.updateState(manager.STATE_ACTIVE_SESSION);
         this.challengeReceived = null; // Clear received challenge data.
-        // Request SessionManager to update UI for the active session.
-        return { action: 'SESSION_ACTIVE' };
+
+        // Trigger SAS Verification for the Initiator
+        // The state update to AWAITING_SAS_VERIFICATION will happen in SessionManager after SAS calculation.
+        return { action: 'CALCULATE_AND_SHOW_SAS' };
     }
+
+    /**
+     * Handles SAS_CONFIRMATION (Type 7.1) message from the peer.
+     * Marks the peer as having confirmed the SAS match.
+     * @param {object} payload - Expected: {} (no specific data needed)
+     * @param {SessionManager} manager - SessionManager instance.
+     * @returns {object} Action object: { action: 'PEER_SAS_CONFIRMED' } or { action: 'NONE' } if state is wrong.
+     */
+    _handleSasConfirmation(payload, manager) {
+        // This can be received by either Initiator or Responder after they've shown the SAS pane.
+        // Check if we are in a state where we expect peer confirmation.
+        const expectedStates = [
+            manager.STATE_AWAITING_SAS_VERIFICATION,
+            manager.STATE_SAS_CONFIRMED_LOCAL // We might have confirmed locally already
+        ];
+        if (!expectedStates.includes(this.state)) {
+            // Always log unexpected state warnings.
+            console.warn(`Session [${this.peerId}] Received unexpected Type 7.1 (SAS Confirm) in state ${this.state}. Ignoring.`);
+            return { action: 'NONE' };
+        }
+
+        // Log confirmation receipt only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`Session [${this.peerId}] Received SAS confirmation from peer.`);
+        this.peerSasConfirmed = true; // Mark peer as confirmed.
+
+        // Request SessionManager check if both sides have confirmed.
+        return { action: 'PEER_SAS_CONFIRMED' };
+    }
+
 
     /**
      * Handles ENCRYPTED_CHAT_MESSAGE (Type 8) message from the peer.
      * Decrypts the message data using the derived AES session key.
      * Attempts to parse the decrypted data as JSON to check for /me actions.
+     * Only processes if session state is ACTIVE_SESSION.
      * @param {object} payload - Expected: { iv: string (Base64), data: string (Base64) }
      * @param {SessionManager} manager - SessionManager instance.
      * @returns {Promise<object>} Action object: { action: 'DISPLAY_MESSAGE', ... } or { action: 'DISPLAY_ME_ACTION', ... } on success, { action: 'DISPLAY_SYSTEM_MESSAGE', ... } or { action: 'NONE' } on failure/wrong state.
@@ -633,7 +682,7 @@ class Session {
         const ivBase64 = payload.iv;
         const encryptedDataBase64 = payload.data;
 
-        // Ignore messages if the session isn't fully active.
+        // Ignore messages if the session isn't fully active (SAS confirmed by both).
         if (this.state !== manager.STATE_ACTIVE_SESSION) {
              // Always log this warning.
              console.warn(`Session [${this.peerId}] Received Type 8 message in non-active state (${this.state}). Ignoring.`);
@@ -703,11 +752,10 @@ class Session {
                 return { action: 'DISPLAY_ME_ACTION', sender: this.peerId, text: actionText };
             } else {
                 // It's either a regular message (isAction: false or missing) or parsing failed.
-                // --- FIX: Extract text from payload if parsing succeeded ---
+                // Extract text from payload if parsing succeeded
                 const messageText = messagePayload ? messagePayload.text : decryptedJsonString;
                 // Ensure messageText is a string, even if payload.text was missing/invalid or parsing failed
                 const finalMessageText = typeof messageText === 'string' ? messageText : decryptedJsonString;
-                // --- END FIX ---
 
                 // Log received message only if DEBUG is enabled.
                 if (config.DEBUG) {
@@ -744,7 +792,7 @@ class Session {
         return { action: 'RESET', reason: message, notifyUser: true };
     }
 
-    // --- Typing Indicator Handlers (Remain the same) ---
+    // --- Typing Indicator Handlers ---
     /**
      * Handles TYPING_START (Type 10) message from the peer.
      * @param {object} payload - Expected: {} (no specific data needed)
@@ -752,7 +800,7 @@ class Session {
      * @returns {object} Action object: { action: 'SHOW_TYPING' } or { action: 'NONE' } if not in active state.
      */
     _handleTypingStart(payload, manager) {
-        // Only process typing indicators if the session is active.
+        // Only process typing indicators if the session is fully active.
         if (this.state !== manager.STATE_ACTIVE_SESSION) {
             // Always log this warning.
             console.warn(`Session [${this.peerId}] Ignoring Type 10 in state ${this.state}`);
@@ -772,7 +820,7 @@ class Session {
      * @returns {object} Action object: { action: 'HIDE_TYPING' } or { action: 'NONE' } if not in active state.
      */
     _handleTypingStop(payload, manager) {
-        // Only process typing indicators if the session is active.
+        // Only process typing indicators if the session is fully active.
         if (this.state !== manager.STATE_ACTIVE_SESSION) {
             // Always log this warning.
             console.warn(`Session [${this.peerId}] Ignoring Type 11 in state ${this.state}`);

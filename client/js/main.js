@@ -286,13 +286,35 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     // -----------------------------------------
 
-    // --- NEW: Bind Emoji Picker Button ---
+    // --- Emoji Picker Button ---
     uiController.bindEmojiPickerButton(() => {
         // Log emoji button click only if DEBUG is enabled.
         if (config.DEBUG) console.log("Emoji picker button clicked.");
         uiController.toggleEmojiPicker(); // Toggle the picker's visibility
     });
-    // --- END NEW ---
+
+    // --- SAS Verification Buttons ---
+    // Bind the "Confirm Match" button in the SAS pane.
+    uiController.bindSasConfirmButton((peerId) => {
+        // Log confirm click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`SAS Confirm button clicked for peer: ${peerId}`);
+        sessionManager.handleSasConfirm(peerId); // Call SessionManager handler
+    });
+
+    // Bind the "Deny / Abort" button in the SAS pane.
+    uiController.bindSasDenyButton((peerId) => {
+        // Log deny click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`SAS Deny button clicked for peer: ${peerId}`);
+        sessionManager.handleSasDeny(peerId); // Call SessionManager handler
+    });
+
+    // Bind the "Cancel" button shown after local SAS confirmation.
+    uiController.bindSasCancelPendingButton((peerId) => {
+        // Log cancel click only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`SAS Cancel Pending button clicked for peer: ${peerId}`);
+        sessionManager.handleSasCancelPending(peerId); // Call SessionManager handler
+    });
+    // --- END SAS Bindings ---
 
 
     // --- 4. Add Page Unload / Hide Event Listeners for Cleanup ---
@@ -306,7 +328,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // This is a best-effort attempt.
         if (sessionManager) {
             sessionManager.notifyPeersOfDisconnect();
-            // NEW: Also attempt to clean up any pending file transfers (cancel/error)
+            // Also attempt to clean up any pending file transfers (cancel/error)
             sessionManager.handleDisconnectionCleanup(); // Add a method for this in SessionManager
         }
         // Attempt a synchronous close of the WebSocket if it's open.

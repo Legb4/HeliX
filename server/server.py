@@ -1,7 +1,7 @@
 # server/server.py
 # This file contains the core logic for the HeliX WebSocket server,
 # including client registration, message relaying, connection handling, SSL setup,
-# rate limiting, message validation (updated for PFS payloads and File Transfer),
+# rate limiting, message validation (updated for PFS payloads, File Transfer, SAS),
 # identifier sanitization, and active session tracking for disconnect notifications.
 
 import asyncio          # For asynchronous operations (coroutines, event loop).
@@ -325,6 +325,16 @@ async def connection_handler(websocket):
                         logging.warning(f"Mismatched 'senderId' in Type {message_type} from registered client {sender_id}. Ignoring: {payload}")
                         validation_passed = False
 
+                # --- NEW: Add validation for Type 7.1 (SAS Confirm) ---
+                elif message_type == 7.1: # SAS Confirmation
+                    if not is_valid_string(target_id):
+                        logging.warning(f"Invalid 'targetId' in Type 7.1 payload from {websocket.remote_address}. Ignoring: {payload}")
+                        validation_passed = False
+                    elif sender_id and payload.get("senderId") != sender_id:
+                        logging.warning(f"Mismatched 'senderId' in Type 7.1 from registered client {sender_id}. Ignoring: {payload}")
+                        validation_passed = False
+                # --- END NEW ---
+
                 elif message_type in [2, 4]: # Public Key types
                     if not is_valid_string(target_id): validation_passed = False
                     elif not is_valid_base64_like(payload.get("publicKey"), 512): # Check publicKey (SPKI format is relatively short)
@@ -353,17 +363,12 @@ async def connection_handler(websocket):
                     elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
                     if not validation_passed: logging.warning(f"Invalid Type 8 payload from {websocket.remote_address}. Ignoring.")
 
-                # --- File Transfer Validation ---
+                # File Transfer Validation
                 elif message_type == 12: # FILE_TRANSFER_REQUEST
                     if not is_valid_string(target_id): validation_passed = False
                     elif not is_valid_string(payload.get("transferId"), 64): validation_passed = False # UUID length + buffer
                     elif not is_valid_string(payload.get("fileName"), 255): validation_passed = False # Max filename length
                     elif not isinstance(payload.get("fileSize"), int) or payload.get("fileSize") < 0: validation_passed = False # Must be non-negative integer
-                    # Optional: Check against server-side max file size from config
-                    # elif hasattr(config, 'MAX_FILE_SIZE_BYTES') and payload.get("fileSize") > config.MAX_FILE_SIZE_BYTES:
-                    #     logging.warning(f"File size {payload.get('fileSize')} exceeds server limit. Rejecting Type 12 from {sender_id}.")
-                    #     await send_json(websocket, 17, {"transferId": payload.get("transferId"), "error": "File exceeds maximum allowed size."})
-                    #     validation_passed = False # Prevent relaying
                     elif not is_valid_string(payload.get("fileType"), 100): validation_passed = False # MIME type length
                     elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
                     if not validation_passed: logging.warning(f"Invalid Type 12 payload from {websocket.remote_address}. Ignoring.")
@@ -380,15 +385,12 @@ async def connection_handler(websocket):
                     elif not is_valid_string(payload.get("transferId"), 64): validation_passed = False
                     elif not isinstance(payload.get("chunkIndex"), int) or payload.get("chunkIndex") < 0: validation_passed = False
                     elif not is_valid_base64_like(payload.get("iv"), 32): validation_passed = False
-                    # --- MODIFIED VALIDATION FOR CHUNK DATA ---
                     # Check only for presence, string type, non-empty, and valid Base64 characters.
                     # Length is handled by the WebSocket max_size setting.
                     elif not isinstance(chunk_data, str) or len(chunk_data) == 0 or not BASE64_CHARS_REGEX.match(chunk_data):
                         logging.warning(f"Invalid 'data' field (type, empty, or invalid chars) in Type 15 payload from {websocket.remote_address}. Ignoring.")
                         validation_passed = False
-                    # --- END MODIFICATION ---
                     elif sender_id and payload.get("senderId") != sender_id: validation_passed = False
-                    # Removed redundant logging check here, main check below covers it.
 
                 elif message_type == 17: # FILE_TRANSFER_ERROR
                     if not is_valid_string(target_id): validation_passed = False
@@ -401,7 +403,7 @@ async def connection_handler(websocket):
 
                 if not validation_passed:
                     # Log the specific failure reason if not already logged above
-                    if message_type != 0 and message_type != 15: # Avoid double logging for reg/chunk
+                    if message_type not in [0, 5, 6, 8, 12, 15, 17]: # Avoid double logging for types with internal logs
                          logging.warning(f"Invalid Type {message_type} payload from {websocket.remote_address}. Ignoring.")
                     continue # Skip processing this invalid message
 
