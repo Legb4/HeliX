@@ -6,7 +6,7 @@
  * showing/hiding different sections of the application, updating text content,
  * enabling/disabling controls, adding/removing items from lists,
  * displaying messages (including file transfers, actions, and clickable links), playing sounds, managing settings UI,
- * managing the SAS verification pane, and binding event listeners to UI elements.
+ * managing the SAS verification pane, handling the mobile sidebar toggle, and binding event listeners to UI elements.
  * It acts as the presentation layer, controlled by the SessionManager.
  */
 class UIController {
@@ -44,6 +44,13 @@ class UIController {
         // Main Content Area Panes (different views within the main area)
         this.mainContent = document.getElementById('main-content');
         this.overlay = document.getElementById('overlay'); // Reference to the overlay div
+
+        // NEW: Mobile Sidebar Elements
+        this.sidebarToggleButton = document.getElementById('sidebar-toggle-button'); // Hamburger button
+        this.sidebarOverlay = document.getElementById('sidebar-overlay'); // Overlay for mobile sidebar
+        // NEW: Reference to the notification dot on the toggle button
+        this.sidebarToggleNotificationDot = document.querySelector('#sidebar-toggle-button .sidebar-toggle-notification-dot');
+
         this.welcomeMessage = document.getElementById('welcome-message'); // Default welcome view
         this.myIdentifierWelcome = document.getElementById('my-identifier-welcome'); // User's ID display in welcome message
         this.appVersionDisplay = document.getElementById('app-version-display'); // Version display element
@@ -207,6 +214,8 @@ class UIController {
         this.hideTypingIndicator();
         // Hide emoji picker when switching main panes
         if (this.emojiPickerPanel) this.emojiPickerPanel.style.display = 'none';
+        // NEW: Ensure mobile sidebar and its overlay are hidden when switching main panes
+        this.toggleMobileSidebar(false);
     }
 
     /**
@@ -498,6 +507,32 @@ class UIController {
     }
     // -----------------------------------
 
+    // --- NEW: Mobile Sidebar Toggle ---
+    /**
+     * Toggles the visibility of the sidebar on mobile devices.
+     * Adds/removes the 'sidebar-visible' class and manages the overlay.
+     * @param {boolean} [forceShow] - Optional. If true, forces the sidebar open. If false, forces close. If undefined, toggles.
+     */
+    toggleMobileSidebar(forceShow) {
+        if (!this.sidebar || !this.sidebarOverlay) return; // Ensure elements exist
+
+        const shouldShow = (forceShow === undefined) ?
+                           !this.sidebar.classList.contains('sidebar-visible') :
+                           forceShow;
+
+        // Log toggle action only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Toggling mobile sidebar. Should show: ${shouldShow}`);
+
+        if (shouldShow) {
+            this.sidebar.classList.add('sidebar-visible');
+            this.sidebarOverlay.classList.add('overlay-visible');
+        } else {
+            this.sidebar.classList.remove('sidebar-visible');
+            this.sidebarOverlay.classList.remove('overlay-visible');
+        }
+    }
+    // --- END NEW ---
+
     // --- Focus Helper Methods ---
     /** Sets focus to the peer ID input field if available and enabled. */
     focusPeerIdInput() {
@@ -681,6 +716,7 @@ class UIController {
 
     /**
      * Removes a session entry from the sidebar list.
+     * Calls _updateSidebarToggleNotification after removal.
      * @param {string} peerId - The identifier of the peer whose list item should be removed.
      */
     removeSessionFromList(peerId) {
@@ -689,6 +725,8 @@ class UIController {
             // Log action only if DEBUG is enabled.
             if (config.DEBUG) console.log(`UI: Removing session ${peerId} from list.`);
             listItem.remove(); // Remove the element
+            // Update the toggle button notification state after removing an item
+            this._updateSidebarToggleNotification();
         } else {
             // Log missing item only if DEBUG is enabled.
             if (config.DEBUG) console.log(`UI: Session ${peerId} not found in list for removal.`);
@@ -698,6 +736,7 @@ class UIController {
     /**
      * Highlights a specific session in the sidebar list as the currently active one.
      * Removes highlighting from any previously active item and clears the unread indicator.
+     * Calls _updateSidebarToggleNotification after updating the list item.
      * @param {string} peerId - The identifier of the peer whose list item should be marked active.
      */
     setActiveSessionInList(peerId) {
@@ -709,6 +748,8 @@ class UIController {
         if (listItem) {
             listItem.classList.add('active-session'); // Add active class
             listItem.classList.remove('has-unread'); // Ensure unread indicator is off
+            // Update the toggle button notification state after clearing unread status
+            this._updateSidebarToggleNotification();
         }
     }
 
@@ -723,6 +764,7 @@ class UIController {
     /**
      * Shows or hides the unread notification dot for a specific session list item.
      * Will not show the dot if the session is currently the active one.
+     * Calls _updateSidebarToggleNotification after updating the list item.
      * @param {string} peerId - The identifier of the peer.
      * @param {boolean} hasUnread - True to show the dot, false to hide it.
      */
@@ -730,19 +772,54 @@ class UIController {
         if (!this.sessionList) return;
         const listItem = this.sessionList.querySelector(`li[data-peerid="${peerId}"]`);
         if (listItem) {
+            let changed = false; // Track if the class actually changed
             if (hasUnread) {
                 // Only add 'has-unread' if the item isn't already the active one
-                if (!listItem.classList.contains('active-session')) {
+                if (!listItem.classList.contains('active-session') && !listItem.classList.contains('has-unread')) {
                     // Log action only if DEBUG is enabled.
                     if (config.DEBUG) console.log(`UI: Setting unread indicator for ${peerId}`);
                     listItem.classList.add('has-unread');
+                    changed = true;
                 }
             } else {
                 // Always remove 'has-unread' when requested
-                // Log action only if DEBUG is enabled.
-                if (config.DEBUG) console.log(`UI: Clearing unread indicator for ${peerId}`);
-                listItem.classList.remove('has-unread');
+                if (listItem.classList.contains('has-unread')) {
+                    // Log action only if DEBUG is enabled.
+                    if (config.DEBUG) console.log(`UI: Clearing unread indicator for ${peerId}`);
+                    listItem.classList.remove('has-unread');
+                    changed = true;
+                }
             }
+            // If the unread status changed, update the toggle button notification
+            if (changed) {
+                this._updateSidebarToggleNotification();
+            }
+        }
+    }
+
+    /**
+     * Updates the visibility of the notification dot on the sidebar toggle button
+     * based on whether any session list items have the 'has-unread' class.
+     * @private
+     */
+    _updateSidebarToggleNotification() {
+        if (!this.sidebarToggleButton || !this.sessionList) return;
+
+        // Check if any list item has the 'has-unread' class
+        const hasAnyUnread = this.sessionList.querySelector('li.has-unread') !== null;
+
+        // Log check result only if DEBUG is enabled.
+        if (config.DEBUG) console.log(`UI: Checking for unread sessions. Found: ${hasAnyUnread}`);
+
+        // Add or remove the 'has-notification' class from the toggle button
+        if (hasAnyUnread) {
+            this.sidebarToggleButton.classList.add('has-notification');
+            // Log adding class only if DEBUG is enabled.
+            if (config.DEBUG) console.log("UI: Added 'has-notification' to sidebar toggle button.");
+        } else {
+            this.sidebarToggleButton.classList.remove('has-notification');
+            // Log removing class only if DEBUG is enabled.
+            if (config.DEBUG) console.log("UI: Removed 'has-notification' from sidebar toggle button.");
         }
     }
 
@@ -1425,6 +1502,7 @@ class UIController {
      * Binds a handler function to click events on the session list.
      * Uses event delegation to handle clicks on dynamically added <li> elements.
      * Extracts the peerId from the clicked item's dataset.
+     * NEW: Checks screen width and closes mobile sidebar if necessary.
      */
     bindSessionListClick(handler) {
          if (this.sessionList) {
@@ -1433,7 +1511,17 @@ class UIController {
                  const listItem = event.target.closest('li[data-peerid]');
                  // If found, call the handler with the peerId
                  if (listItem && listItem.dataset.peerid) {
-                     handler(listItem.dataset.peerid);
+                     const peerId = listItem.dataset.peerid;
+                     handler(peerId); // Call the main handler (e.g., switchToSessionView)
+
+                     // NEW: Close sidebar on mobile after clicking a session
+                     // Check if the window width is below the mobile breakpoint (e.g., 768px)
+                     // This value should ideally match the one in style.css
+                     if (window.innerWidth <= 768) {
+                         // Log sidebar close only if DEBUG is enabled.
+                         if (config.DEBUG) console.log("UI: Closing mobile sidebar after session list click.");
+                         this.toggleMobileSidebar(false); // Force close the sidebar
+                     }
                  }
              });
          }
@@ -1705,6 +1793,28 @@ class UIController {
     }
     // --- END Emoji Picker Bindings ---
 
+    // --- NEW: Mobile Sidebar Bindings ---
+    /**
+     * Binds a handler function to the sidebar toggle button's click event.
+     * @param {function} handler - The function to call (likely toggleMobileSidebar).
+     */
+    bindSidebarToggleButton(handler) {
+        if (this.sidebarToggleButton) {
+            this.sidebarToggleButton.addEventListener('click', handler);
+        }
+    }
+
+    /**
+     * Binds a handler function to the sidebar overlay's click event.
+     * @param {function} handler - The function to call (likely to close the sidebar).
+     */
+    bindSidebarOverlayClick(handler) {
+        if (this.sidebarOverlay) {
+            this.sidebarOverlay.addEventListener('click', handler);
+        }
+    }
+    // --- END NEW ---
+
     // --- Linkify Helper ---
     /**
      * Finds URLs within a given text node and replaces them with clickable links.
@@ -1905,6 +2015,9 @@ class UIController {
             this.sidebarControls, this.muteButton, this.settingsButton,
             this.sessionListContainer, this.sessionList,
             this.mainContent, this.overlay,
+            // NEW: Mobile Sidebar Elements
+            this.sidebarToggleButton, this.sidebarOverlay,
+            this.sidebarToggleNotificationDot, // Added toggle button dot
             this.welcomeMessage, this.myIdentifierWelcome,
             this.appVersionDisplay, // Added version display
             this.incomingRequestArea, this.incomingRequestText,

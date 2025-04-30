@@ -2468,6 +2468,13 @@ class SessionManager {
 
     // --- Internal File Transfer Message Handlers ---
 
+    /**
+     * Handles an incoming file transfer request (Type 12).
+     * Stores initial state including expected chunk count.
+     * @param {Session} session - The session object (receiver's session).
+     * @param {object} payload - The request payload.
+     * @returns {Promise<object>} Action object (always 'NONE' for now).
+     */
     async _handleFileTransferRequest(session, payload) {
         const { transferId, fileName, fileSize, fileType, senderId } = payload;
         // Log request only if DEBUG is enabled.
@@ -2487,6 +2494,9 @@ class SessionManager {
              return { action: 'NONE' };
         }
 
+        // NEW: Calculate expected chunks
+        const expectedChunks = Math.ceil(fileSize / this.CHUNK_SIZE);
+
         // Store initial state for the incoming transfer
         session.addTransferState(transferId, {
             status: 'pending_acceptance',
@@ -2495,7 +2505,10 @@ class SessionManager {
             fileSize: fileSize,
             fileType: fileType,
             senderId: senderId, // Store who sent it
-            isSender: false // Mark this client as the receiver
+            isSender: false, // Mark this client as the receiver
+            expectedChunks: expectedChunks, // NEW: Store expected chunk count
+            receivedChunkCount: 0, // NEW: Initialize received count
+            completionSignalReceived: false // NEW: Flag for Type 16
         });
 
         // Display the request in the UI
@@ -2512,6 +2525,13 @@ class SessionManager {
         return { action: 'NONE' }; // No further action needed until user interacts
     }
 
+    /**
+     * Handles the peer accepting the file transfer (Type 13).
+     * Updates state and starts the upload process.
+     * @param {Session} session - The session object (sender's session).
+     * @param {object} payload - The acceptance payload.
+     * @returns {Promise<object>} Action object (always 'NONE').
+     */
     async _handleFileTransferAccept(session, payload) {
         const { transferId } = payload;
         // Log acceptance only if DEBUG is enabled.
@@ -2535,6 +2555,13 @@ class SessionManager {
         return { action: 'NONE' };
     }
 
+    /**
+     * Handles the peer rejecting the file transfer (Type 14).
+     * Updates UI and cleans up the transfer state.
+     * @param {Session} session - The session object (sender's session).
+     * @param {object} payload - The rejection payload.
+     * @returns {Promise<object>} Action object (always 'NONE').
+     */
     async _handleFileTransferReject(session, payload) {
         const { transferId } = payload;
         // Log rejection only if DEBUG is enabled.
@@ -2560,6 +2587,13 @@ class SessionManager {
         return { action: 'NONE' };
     }
 
+    /**
+     * Handles receiving a file chunk (Type 15).
+     * Decrypts, stores in DB, updates progress, and attempts assembly.
+     * @param {Session} session - The session object (receiver's session).
+     * @param {object} payload - The chunk payload.
+     * @returns {Promise<object>} Action object (always 'NONE').
+     */
     async _handleFileChunk(session, payload) {
         const { transferId, chunkIndex, iv, data } = payload;
         // Log chunk receipt only if DEBUG is enabled (can be very verbose)
@@ -2593,12 +2627,19 @@ class SessionManager {
             // Store chunk in IndexedDB
             await this.addChunkToDB(transferId, chunkIndex, decryptedChunk);
 
+            // NEW: Increment received chunk count
+            transferState.receivedChunkCount++;
+
             // Update progress (calculate based on index and total size)
             // Note: We don't know the total number of chunks easily, so use size.
-            const progressPercent = Math.min(100, ((chunkIndex + 1) * this.CHUNK_SIZE / transferState.fileSize) * 100);
+            // Use receivedChunkCount for more accurate progress representation
+            const progressPercent = Math.min(100, (transferState.receivedChunkCount / transferState.expectedChunks) * 100);
             transferState.progress = progressPercent; // Update state
             this.uiController.updateFileTransferProgress(transferId, progressPercent);
             this.uiController.updateFileTransferStatus(transferId, `Receiving ${progressPercent.toFixed(1)}%...`);
+
+            // NEW: Attempt assembly after storing chunk
+            await this._attemptFileAssembly(session, transferId);
 
         } catch (error) {
             // Always log errors during chunk processing.
@@ -2617,86 +2658,51 @@ class SessionManager {
         return { action: 'NONE' };
     }
 
+    /**
+     * Handles the file transfer completion signal (Type 16).
+     * Sets a flag and attempts assembly.
+     * @param {Session} session - The session object (receiver's session).
+     * @param {object} payload - The completion payload.
+     * @returns {Promise<object>} Action object (always 'NONE').
+     */
     async _handleFileTransferComplete(session, payload) {
         const { transferId } = payload;
         // Log completion signal only if DEBUG is enabled.
         if (config.DEBUG) console.log(`Received transfer complete signal for ${transferId}`);
 
         const transferState = session.getTransferState(transferId);
-        // Only process if we are the receiver and were receiving
-        if (!transferState || transferState.isSender || transferState.status !== 'receiving') {
+        // Only process if we are the receiver and were receiving/accepted
+        if (!transferState || transferState.isSender || (transferState.status !== 'receiving' && transferState.status !== 'accepted')) {
             // Always log this warning.
             console.warn(`Received unexpected completion for transfer ${transferId} or invalid state (${transferState?.status}).`);
             return { action: 'NONE' };
         }
 
-        this.uiController.updateFileTransferStatus(transferId, "Transfer complete. Assembling file...");
-        this.uiController.updateFileTransferProgress(transferId, 100); // Ensure progress shows 100%
+        // NEW: Set completion flag
+        transferState.completionSignalReceived = true;
 
-        try {
-            // Retrieve all chunks from IndexedDB
-            const chunks = await this.getChunksFromDB(transferId);
-            if (!chunks || chunks.length === 0) {
-                throw new Error("No chunks found in database for assembly.");
-            }
-
-            // Verify completeness (simple count check for now)
-            const expectedChunks = Math.ceil(transferState.fileSize / this.CHUNK_SIZE);
-            if (chunks.length !== expectedChunks) {
-                // More robust check: ensure all indices from 0 to expectedChunks-1 are present.
-                const receivedIndices = new Set(chunks.map(c => c.chunkIndex));
-                const missing = [];
-                for (let i = 0; i < expectedChunks; i++) {
-                    if (!receivedIndices.has(i)) {
-                        missing.push(i);
-                    }
-                }
-                if (missing.length > 0) {
-                    throw new Error(`File assembly failed: Missing chunks (${missing.join(', ')}). Expected ${expectedChunks}, got ${chunks.length}.`);
-                }
-                 // Always log this warning.
-                 console.warn(`Chunk count mismatch for ${transferId}. Expected ${expectedChunks}, got ${chunks.length}. Proceeding anyway.`);
-            }
-
-            // Sort chunks by index - IMPORTANT!
-            chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
-
-            // Assemble Blob
-            const blob = new Blob(chunks.map(c => c.data), { type: transferState.fileType });
-
-            // Verify final blob size matches expected size
-            if (blob.size !== transferState.fileSize) {
-                throw new Error(`Assembled file size mismatch. Expected ${transferState.fileSize}, got ${blob.size}.`);
-            }
-
-            // Show download link
-            this.uiController.showFileDownloadLink(transferId, blob, transferState.fileName);
-            this.uiController.updateFileTransferStatus(transferId, "Download ready.");
-            this.uiController.playSound('file_complete');
-
-            // Clean up DB and session state *after* successful assembly and link creation
-            await this.deleteChunksFromDB(transferId);
-            transferState.status = 'complete'; // Mark as complete in session state before removing? Or just remove?
-            // Let's keep the state briefly for potential UI interactions, cleanup happens on reset/disconnect
-            // session.removeTransferState(transferId); // Or keep it until session reset?
-
-        } catch (error) {
-            // Always log assembly errors.
-            console.error(`Error assembling file for transfer ${transferId}:`, error);
-            this.uiController.playSound('file_error');
-            this.uiController.updateFileTransferStatus(transferId, `Error: ${error.message}`);
-            this.uiController.hideFileTransferActions(transferId);
-            // Send error notification to peer
-            const errorPayload = { targetId: transferState.senderId, senderId: this.identifier, transferId: transferId, error: `File assembly failed: ${error.message}` };
-            this.wsClient.sendMessage({ type: 17, payload: errorPayload });
-            // Clean up local state and DB
-            await this.deleteChunksFromDB(transferId);
-            session.removeTransferState(transferId);
+        // Update UI slightly differently - we know sender finished, but maybe not all chunks processed yet
+        if (transferState.receivedChunkCount < transferState.expectedChunks) {
+            this.uiController.updateFileTransferStatus(transferId, `Sender finished. Waiting for remaining chunks (${transferState.receivedChunkCount}/${transferState.expectedChunks})...`);
+        } else {
+            // If we already have all chunks, update status to assembling
+            this.uiController.updateFileTransferStatus(transferId, "Transfer complete. Assembling file...");
         }
+        this.uiController.updateFileTransferProgress(transferId, 100); // Show 100% as sender is done
+
+        // NEW: Attempt assembly
+        await this._attemptFileAssembly(session, transferId);
 
         return { action: 'NONE' };
     }
 
+    /**
+     * Handles a file transfer error message (Type 17) from the peer.
+     * Updates UI and cleans up the transfer state.
+     * @param {Session} session - The session object.
+     * @param {object} payload - The error payload.
+     * @returns {Promise<object>} Action object (always 'NONE').
+     */
     async _handleFileTransferError(session, payload) {
         const { transferId, error } = payload;
         const errorMessage = error || "Peer reported an error.";
@@ -2720,6 +2726,89 @@ class SessionManager {
         session.removeTransferState(transferId);
 
         return { action: 'NONE' };
+    }
+
+    /**
+     * NEW: Attempts to assemble the file if all chunks and the completion signal have been received.
+     * @param {Session} session - The session object (receiver's session).
+     * @param {string} transferId - The ID of the transfer to potentially assemble.
+     * @private
+     */
+    async _attemptFileAssembly(session, transferId) {
+        const transferState = session.getTransferState(transferId);
+
+        // Check if assembly conditions are met
+        if (transferState &&
+            transferState.completionSignalReceived === true &&
+            transferState.receivedChunkCount === transferState.expectedChunks)
+        {
+            // Log assembly attempt only if DEBUG is enabled.
+            if (config.DEBUG) console.log(`Attempting final assembly for transfer ${transferId}`);
+            this.uiController.updateFileTransferStatus(transferId, "Transfer complete. Assembling file...");
+
+            try {
+                // Retrieve all chunks from IndexedDB
+                const chunks = await this.getChunksFromDB(transferId);
+                if (!chunks || chunks.length === 0) {
+                    throw new Error("No chunks found in database for assembly.");
+                }
+
+                // Verify completeness (check count again just in case)
+                if (chunks.length !== transferState.expectedChunks) {
+                    // More robust check: ensure all indices from 0 to expectedChunks-1 are present.
+                    const receivedIndices = new Set(chunks.map(c => c.chunkIndex));
+                    const missing = [];
+                    for (let i = 0; i < transferState.expectedChunks; i++) {
+                        if (!receivedIndices.has(i)) {
+                            missing.push(i);
+                        }
+                    }
+                    if (missing.length > 0) {
+                        throw new Error(`File assembly failed: Missing chunks (${missing.join(', ')}). Expected ${transferState.expectedChunks}, got ${chunks.length}.`);
+                    }
+                     // Always log this warning.
+                     console.warn(`Chunk count mismatch for ${transferId}. Expected ${transferState.expectedChunks}, got ${chunks.length}. Proceeding anyway.`);
+                }
+
+                // Sort chunks by index - IMPORTANT!
+                chunks.sort((a, b) => a.chunkIndex - b.chunkIndex);
+
+                // Assemble Blob
+                const blob = new Blob(chunks.map(c => c.data), { type: transferState.fileType });
+
+                // Verify final blob size matches expected size
+                if (blob.size !== transferState.fileSize) {
+                    throw new Error(`Assembled file size mismatch. Expected ${transferState.fileSize}, got ${blob.size}.`);
+                }
+
+                // Show download link
+                this.uiController.showFileDownloadLink(transferId, blob, transferState.fileName);
+                this.uiController.updateFileTransferStatus(transferId, "Download ready.");
+                this.uiController.playSound('file_complete');
+
+                // Clean up DB and mark state as complete
+                await this.deleteChunksFromDB(transferId);
+                transferState.status = 'complete'; // Mark as complete in session state
+
+            } catch (error) {
+                // Always log assembly errors.
+                console.error(`Error assembling file for transfer ${transferId}:`, error);
+                this.uiController.playSound('file_error');
+                this.uiController.updateFileTransferStatus(transferId, `Error: ${error.message}`);
+                this.uiController.hideFileTransferActions(transferId);
+                // Send error notification to peer
+                const errorPayload = { targetId: transferState.senderId, senderId: this.identifier, transferId: transferId, error: `File assembly failed: ${error.message}` };
+                this.wsClient.sendMessage({ type: 17, payload: errorPayload });
+                // Clean up local state and DB
+                await this.deleteChunksFromDB(transferId);
+                session.removeTransferState(transferId);
+            }
+        } else if (transferState) {
+            // Log conditions not met only if DEBUG is enabled.
+            if (config.DEBUG) {
+                console.log(`Assembly conditions not met for ${transferId}: Signal Received=${transferState.completionSignalReceived}, Chunks Received=${transferState.receivedChunkCount}/${transferState.expectedChunks}`);
+            }
+        }
     }
 
     // --- IndexedDB Helper Methods ---
@@ -2807,7 +2896,7 @@ class SessionManager {
                 const store = transaction.objectStore(this.CHUNK_STORE_NAME);
 
                 // Log transaction start only if DEBUG is enabled.
-                if (config.DEBUG) console.log(`DB: Starting transaction to add chunk ${chunkIndex} for ${transferId}`);
+                // if (config.DEBUG) console.log(`DB: Starting transaction to add chunk ${chunkIndex} for ${transferId}`);
 
                 // Handle transaction errors
                 transaction.onerror = (event) => {
@@ -2819,7 +2908,7 @@ class SessionManager {
                 // Handle transaction completion
                 transaction.oncomplete = () => {
                     // Log completion only if DEBUG is enabled.
-                    if (config.DEBUG) console.log(`DB: Transaction complete for adding chunk ${chunkIndex} for ${transferId}.`);
+                    // if (config.DEBUG) console.log(`DB: Transaction complete for adding chunk ${chunkIndex} for ${transferId}.`);
                     resolve();
                 };
 
@@ -2835,7 +2924,7 @@ class SessionManager {
                 };
                  request.onsuccess = () => {
                      // Log put success only if DEBUG is enabled.
-                     if (config.DEBUG) console.log(`DB: Put request successful for chunk ${chunkIndex} for ${transferId}. Waiting for transaction commit...`);
+                     // if (config.DEBUG) console.log(`DB: Put request successful for chunk ${chunkIndex} for ${transferId}. Waiting for transaction commit...`);
                  };
 
             } catch (error) {
@@ -2904,7 +2993,7 @@ class SessionManager {
                 let deleteCount = 0;
 
                 // Log transaction start only if DEBUG is enabled.
-                if (config.DEBUG) console.log(`DB: Starting transaction to delete chunks for ${transferId}`);
+                // if (config.DEBUG) console.log(`DB: Starting transaction to delete chunks for ${transferId}`);
 
                 transaction.onerror = (event) => {
                     // Always log DB errors.

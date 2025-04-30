@@ -30,6 +30,21 @@
     <!-- It's displayed by JavaScript after successful registration. -->
     <div id="app-container">
 
+        <!-- NEW: Sidebar Toggle Button (Hamburger Icon) -->
+        <!-- This button is only visible on smaller screens (controlled by CSS media query) -->
+        <!-- and is used to open/close the sidebar. -->
+        <button id="sidebar-toggle-button" title="Toggle Sidebar">
+            ☰
+            <span class="sidebar-toggle-notification-dot"></span> <!-- Notification dot container -->
+        </button>
+        <!-- END NEW -->
+
+        <!-- NEW: Sidebar Overlay -->
+        <!-- This div covers the main content when the sidebar is open on mobile, -->
+        <!-- allowing the user to click outside the sidebar to close it. -->
+        <div id="sidebar-overlay"></div>
+        <!-- END NEW -->
+
         <!-- Sidebar -->
         <!-- Contains user info, controls to start new chats, and the list of current sessions. -->
         <div id="sidebar">
@@ -74,7 +89,7 @@
         <!-- It now contains the overlay and all the content panes. -->
         <div id="main-content">
 
-            <!-- Overlay Element -->
+            <!-- Overlay Element (for modal panes like Info, Settings, SAS) -->
             <!-- This div will cover the main content area with a semi-transparent background -->
             <!-- when modal-like panes (Info, Incoming Request, Settings, SAS) are shown. -->
             <div id="overlay"></div>

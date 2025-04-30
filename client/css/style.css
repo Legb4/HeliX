@@ -28,9 +28,12 @@
     --bg-danger-info: #442a31;          /* Background for error/denial info areas */
     --bg-settings: #2d2d30;             /* Background for the settings pane */
     --bg-overlay: rgba(0, 0, 0, 0.6);   /* Background for the overlay */
+    --bg-sidebar-overlay: rgba(0, 0, 0, 0.5); /* NEW: Background for sidebar overlay */
     --bg-emoji-panel: #2d2d30;          /* NEW: Background for emoji picker */
     --bg-emoji-hover: #3f3f46;          /* NEW: Background for emoji on hover */
     --bg-sas-display: #1a1a1a;          /* NEW: Background for the SAS code display */
+    --bg-toggle-button: #3f3f46;        /* NEW: Background for sidebar toggle button */
+    --bg-toggle-button-hover: #5a5a63;  /* NEW: Hover background for toggle button */
 
     /* Text Colors */
     --text-light: #cccccc;              /* Primary light text color */
@@ -47,6 +50,7 @@
     --text-typing: #a0a0a0;             /* Color for the 'is typing...' indicator text */
     --text-file-info: #b0b0b0;          /* NEW: Color for file info text */
     --text-sas-display: #e0e0e0;        /* NEW: Text color for the SAS code */
+    --text-toggle-button: #cccccc;      /* NEW: Text/icon color for toggle button */
 
     /* Border Colors */
     --border-color: #333333;            /* Default border color */
@@ -58,12 +62,17 @@
     --border-color-file: #4a4a55;       /* NEW: Border color for file transfer messages */
     --border-color-emoji-panel: #444;   /* NEW: Border color for emoji picker */
     --border-color-sas-display: #444;   /* NEW: Border color for SAS display */
+    --border-color-toggle-button: #555; /* NEW: Border color for toggle button */
 
     /* Accent Colors */
     --accent-red: #f44336;              /* Red accent (e.g., notification dot) */
     --accent-blue: #007acc;             /* Blue accent (e.g., input focus, version text) */
     --accent-green: #4ec9b0;            /* Green accent (e.g., own ID highlight) */
     --accent-progress: #0e639c;         /* NEW: Color for progress bar */
+
+    /* NEW: Sidebar Dimensions and Transition */
+    --sidebar-width: 250px;             /* Define sidebar width as a variable */
+    --sidebar-transition-duration: 0.3s; /* Define transition speed */
 }
 
 /* Basic Reset & Body */
@@ -89,6 +98,7 @@ body {
     color: var(--text-light); /* Apply default text color */
     font-size: 15px; /* Base font size */
     line-height: 1.5; /* Base line height */
+    overflow: hidden; /* Prevent body scroll on desktop, needed for mobile layout */
 }
 
 /* Status Bar (Footer Style) */
@@ -144,12 +154,13 @@ body {
     height: 100%; /* Fill the available height */
     /* display: flex; */ /* This will be set by JS */
     overflow: hidden; /* Prevent content overflow from breaking layout */
+    position: relative; /* NEW: Needed for positioning sidebar overlay */
 }
 
 /* Sidebar */
 /* Styles the left sidebar containing user info, chat initiation, and session list. */
 #sidebar {
-    width: 240px; /* Fixed width */
+    width: var(--sidebar-width); /* Use variable for width */
     flex-shrink: 0; /* Prevent shrinking */
     border-right: 1px solid var(--border-color); /* Border separating from main content */
     padding: 15px; /* Inner spacing */
@@ -157,6 +168,8 @@ body {
     flex-direction: column; /* Stack children vertically */
     background-color: var(--bg-sidebar); /* Sidebar background color */
     overflow-y: auto; /* Allow vertical scrolling if content exceeds height */
+    /* NEW: Add transition for smooth sliding on mobile */
+    transition: left var(--sidebar-transition-duration) ease-in-out, transform var(--sidebar-transition-duration) ease-in-out;
 }
 
 /* Displays the user's registered identifier in the sidebar. */
@@ -356,7 +369,7 @@ body {
 /* Styles the main area to the right of the sidebar where different views are displayed. */
 #main-content {
     flex-grow: 1; /* Allow this area to take up remaining horizontal space */
-    padding: 15px 20px; /* Inner spacing */
+    padding: 15px 20px; /* Inner spacing (left padding adjusted in media query) */
     display: flex; /* Use flexbox */
     flex-direction: column; /* Stack content vertically */
     overflow: hidden; /* Prevent content overflow */
@@ -626,6 +639,8 @@ body {
     display: flex; /* Use flexbox for layout */
     justify-content: space-between; /* Push peer ID and button apart */
     align-items: center; /* Vertically align items */
+    /* NEW: Add relative positioning for mobile padding adjustment */
+    position: relative;
 }
 /* Styles the peer's ID within the chat header. */
 #chat-header strong {
@@ -1069,7 +1084,8 @@ select:disabled {
 
 /* Base styles for all buttons (excluding icon buttons and disconnect). */
 /* MODIFIED: Added #attach-button, #emoji-picker-button, #sas-confirm-button, #sas-deny-button, #sas-cancel-pending-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button) {
+/* NEW: Added #sidebar-toggle-button to exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):not(#sidebar-toggle-button) {
     padding: 8px 15px; /* Default padding */
     cursor: pointer; /* Indicate interactivity */
     border: 1px solid var(--border-color); /* Default border */
@@ -1081,18 +1097,21 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
 }
 /* Styles for buttons on hover (excluding icon buttons and disconnect). */
 /* MODIFIED: Added #attach-button, #emoji-picker-button, #sas-confirm-button, #sas-deny-button, #sas-cancel-pending-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):hover {
+/* NEW: Added #sidebar-toggle-button to exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):not(#sidebar-toggle-button):hover {
     background-color: var(--bg-button-hover); /* Hover background color */
     border-color: #666; /* Slightly lighter border */
 }
 /* Styles for buttons when actively being clicked (excluding icon buttons and disconnect). */
 /* MODIFIED: Added #attach-button, #emoji-picker-button, #sas-confirm-button, #sas-deny-button, #sas-cancel-pending-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):active {
+/* NEW: Added #sidebar-toggle-button to exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):not(#sidebar-toggle-button):active {
      background-color: var(--bg-button-active); /* Active background color */
 }
 /* Styles for disabled buttons (excluding icon buttons and disconnect). */
 /* MODIFIED: Added #attach-button, #emoji-picker-button, #sas-confirm-button, #sas-deny-button, #sas-cancel-pending-button to the exclusion list */
-button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):disabled {
+/* NEW: Added #sidebar-toggle-button to exclusion list */
+button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#attach-button):not(#emoji-picker-button):not(#sas-confirm-button):not(#sas-deny-button):not(#sas-cancel-pending-button):not(#sidebar-toggle-button):disabled {
     background-color: var(--bg-button-disabled); /* Disabled background */
     border-color: var(--border-color-input); /* Use input border color */
     color: var(--text-button-disabled); /* Disabled text color */
@@ -1192,3 +1211,138 @@ button:not(#mute-button):not(#settings-button):not(#disconnect-button):not(#atta
   scrollbar-width: thin; /* Use thin scrollbars */
   scrollbar-color: #555 var(--bg-sidebar); /* thumb color, track color */
 }
+
+
+/* --- NEW: Mobile Responsiveness --- */
+
+/* Styles for the sidebar toggle button (hamburger icon) */
+#sidebar-toggle-button {
+    display: none; /* Hidden by default on larger screens */
+    position: fixed; /* Position relative to viewport */
+    top: 10px;
+    left: 10px;
+    z-index: 1001; /* Ensure it's above the sidebar and overlay */
+    padding: 8px 10px;
+    background-color: var(--bg-toggle-button);
+    color: var(--text-toggle-button);
+    border: 1px solid var(--border-color-toggle-button);
+    border-radius: 4px;
+    font-size: 1.5em; /* Adjust icon size */
+    line-height: 1; /* Helps control height */
+    cursor: pointer;
+    transition: background-color 0.15s ease;
+    /* REMOVED: position: relative; - Incorrect with position: fixed */
+    /* The fixed position itself provides context for the absolute dot */
+}
+#sidebar-toggle-button:hover {
+    background-color: var(--bg-toggle-button-hover);
+}
+
+/* --- NEW: Sidebar Toggle Notification Dot Styling --- */
+/* Styles the notification dot specifically for the sidebar toggle button */
+.sidebar-toggle-notification-dot {
+    display: none; /* Hidden by default */
+    position: absolute; /* Position relative to the button */
+    bottom: 2px; /* Adjust position (closer to corner) */
+    right: 2px; /* Adjust position (closer to corner) */
+    width: 10px; /* Size of the dot */
+    height: 10px; /* Size of the dot */
+    background-color: var(--accent-red); /* Use accent red color */
+    border-radius: 50%; /* Make it circular */
+    border: 1px solid var(--bg-toggle-button); /* Optional border to separate from button background */
+    /* Apply the same pulse animation as the session list dot */
+    animation: pulse 1.5s infinite;
+    box-shadow: 0 0 0 0 rgba(244, 67, 54, 0.7);
+}
+
+/* Rule to show the dot when the button has the 'has-notification' class */
+#sidebar-toggle-button.has-notification .sidebar-toggle-notification-dot {
+    display: block; /* Show the dot */
+}
+/* --- END NEW --- */
+
+
+/* Styles for the overlay shown when the sidebar is open on mobile */
+#sidebar-overlay {
+    display: none; /* Hidden by default */
+    position: fixed; /* Cover the whole viewport */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--bg-sidebar-overlay); /* Semi-transparent background */
+    z-index: 999; /* Below sidebar, above main content */
+    cursor: pointer; /* Indicate it can be clicked to close */
+}
+/* Class added by JS to show the overlay */
+#sidebar-overlay.overlay-visible {
+    display: block;
+}
+
+/* Media Query for smaller screens (e.g., tablets and phones) */
+@media (max-width: 768px) {
+
+    /* Show the toggle button */
+    #sidebar-toggle-button {
+        display: block;
+    }
+
+    /* Adjust sidebar for fixed positioning and sliding */
+    #sidebar {
+        position: fixed; /* Take sidebar out of document flow */
+        top: 0;
+        left: calc(-1 * var(--sidebar-width)); /* Start off-screen to the left */
+        height: 100vh; /* Full viewport height */
+        z-index: 1000; /* Ensure sidebar is above overlay and main content */
+        border-right: 1px solid var(--border-color); /* Keep border */
+        box-shadow: 2px 0 5px rgba(0, 0, 0, 0.3); /* Add shadow for depth */
+        /* Transition is already defined above */
+    }
+
+    /* Class added by JS to slide the sidebar into view */
+    #sidebar.sidebar-visible {
+        left: 0; /* Slide in from the left */
+    }
+
+    /* Make main content take full width */
+    #main-content {
+        width: 100%;
+        /* REMOVED: padding-left: 55px; */ /* Remove padding from the whole content area */
+        padding-right: 15px; /* NEW: Add some right padding for consistency */
+        /* Ensure main content is scrollable if needed, not the body */
+        overflow-y: auto;
+    }
+
+    /* Add padding specifically to the chat header to avoid the toggle button */
+    #chat-header {
+        padding-left: 55px; /* Adjust this value based on toggle button size/position */
+        margin-top: 10px; /* NEW: Add space above the header */
+    }
+
+    /* NEW: Adjust message input area for mobile */
+    #message-input {
+        min-width: 0; /* Allow input to shrink */
+        margin-right: 5px; /* Reduce space next to send button */
+    }
+    /* END NEW */
+
+    /* Adjust app container if needed (might not be necessary) */
+    /* #app-container { display: block; } */
+
+    /* Adjust message area height if status bar overlaps */
+    /* This might need tweaking based on exact layout */
+    #message-area {
+        /* Consider reducing max-height or adjusting padding if overlap occurs */
+    }
+
+    /* Ensure modal-like panes are still centered correctly */
+    #incoming-request-area,
+    #info-area,
+    #waiting-response-area,
+    #sas-verification-area,
+    #settings-pane {
+        /* Max-width and width: 90% should handle responsiveness */
+        /* Position: absolute relative to #main-content should still work */
+    }
+}
+/* --- END Mobile Responsiveness --- */

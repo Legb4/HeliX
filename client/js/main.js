@@ -16,7 +16,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const uiController = new UIController();
 
     // Create an instance of the WebSocketClient, passing the server URL from config.js.
-    const webSocketClient = new WebSocketClient(config.webSocketUrl);
+    // MODIFICATION: WebSocket URL is now determined dynamically inside WebSocketClient.connect()
+    const webSocketClient = new WebSocketClient(); // No URL needed here anymore
 
     // Create an instance of the SessionManager.
     // Pass it the WebSocket client (for sending messages), the UI controller (for updating the view),
@@ -315,6 +316,18 @@ document.addEventListener('DOMContentLoaded', () => {
         sessionManager.handleSasCancelPending(peerId); // Call SessionManager handler
     });
     // --- END SAS Bindings ---
+
+    // --- NEW: Mobile Sidebar Bindings ---
+    // Bind the toggle button click to the UIController's toggle method.
+    uiController.bindSidebarToggleButton(() => {
+        uiController.toggleMobileSidebar(); // No argument means toggle
+    });
+
+    // Bind the overlay click to force-close the sidebar.
+    uiController.bindSidebarOverlayClick(() => {
+        uiController.toggleMobileSidebar(false); // Pass false to force close
+    });
+    // --- END NEW ---
 
 
     // --- 4. Add Page Unload / Hide Event Listeners for Cleanup ---
