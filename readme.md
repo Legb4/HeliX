@@ -97,10 +97,10 @@ Ensure you have the following before setting up HeliX:
 ## Usage Guide
 
 1.  **Access Client & Register:** Open the HeliX URL in your browser. Choose a unique temporary ID (3-30 chars: `a-z`, `A-Z`, `0-9`, `-`, `_`) and click "Register".
-2.  **Share ID (OOB - Step 1):** Securely communicate your registered ID (shown in the sidebar) to your intended peer using a separate channel (phone, video, etc.).
+2.  **Share ID (OOB - Step 1):** Securely communicate your registered ID (shown in the sidebar) to your intended peer using a separate channel (phone, video, etc.). *(On smaller screens, use the `☰` button to access the sidebar).*
 3.  **Initiate or Accept Chat:**
-    *   **To Initiate:** Enter your peer's ID in the sidebar input field and click "Start Chat".
-    *   **To Accept:** If you receive a request notification, click "Accept" (or "Deny"). You might need to click the peer's ID in the session list first if another chat is active.
+    *   **To Initiate:** Enter your peer's ID in the sidebar input field and click "Start Chat". *(Use `☰` on smaller screens to access the sidebar).*
+    *   **To Accept:** If you receive a request notification, click "Accept" (or "Deny"). You might need to click the peer's ID in the session list first if another chat is active. *(Use `☰` on smaller screens to access the sidebar and session list).*
 4.  **SAS Verification (OOB - Step 2 - CRITICAL):**
     *   After the initial connection, the **"Verify Connection"** pane appears, showing a code (e.g., `123 456`).
     *   **You MUST compare this code** with your peer's code **out-of-band** (e.g., read it aloud over a phone call). This verifies you have a secure connection directly with your peer and protects against Man-in-the-Middle attacks.
@@ -115,7 +115,7 @@ Ensure you have the following before setting up HeliX:
     *   `/version`: Show client version.
     *   `/info`: Show connection details.
     *   `/help`: Show this list.
-8.  **Controls:** Use sidebar buttons (🔊/🔇, ⚙️) for mute/settings. Click peer IDs in the list to switch sessions. Use the "End Session" button in the chat header to disconnect.
+8.  **Controls:** Use sidebar buttons (🔊/🔇, ⚙️) for mute/settings. Click peer IDs in the list to switch sessions. Use the "End Session" button in the chat header to disconnect. *(Use `☰` on smaller screens to access the sidebar controls and session list).*
 
 ---
 
