@@ -156,7 +156,7 @@ HeliX establishes a secure, end-to-end encrypted channel with Perfect Forward Se
 *   **Out-of-Band Security:** The secure exchange of temporary IDs and the correct comparison of SAS codes via a trusted out-of-band channel are critical user responsibilities. **Failure to compare SAS codes correctly defeats the MitM protection.**
 *   **Metadata:** The server knows which IDs are connected and relays messages between them. It also temporarily tracks active pairings (`Alice` <-> `Bob`) to notify users if their peer disconnects unexpectedly. This metadata does not expose message content but could reveal communication patterns if the server were compromised.
 
---- <!-- NEW SECTION START -->
+---
 
 ## Cloud Deployment Considerations
 
@@ -195,7 +195,7 @@ The `helix_manager.py` script is designed for local development and testing, han
 
 **Disclaimer:** Providing detailed Nginx/Apache configuration, Certbot usage, or process manager setup is beyond the scope of this documentation. Please refer to the official documentation for those tools.
 
---- <!-- NEW SECTION END -->
+---
 
 ## Troubleshooting
 
