@@ -1098,7 +1098,7 @@ class UIController {
                     '<button class="file-cancel-btn">Cancel</button>' :
                     '<button class="file-accept-btn">Accept</button><button class="file-reject-btn">Reject</button>'
                 }
-                <a class="file-download-link" style="display: none;">Download</a>
+                <a class="file-download-link" style="display: none;">Save File</a>
             </div>
         `;
 
