@@ -8,6 +8,7 @@
 *   [Running HeliX](#running-helix)
 *   [Usage Guide](#usage-guide)
 *   [How HeliX Works & Security](#how-helix-works--security)
+*   [Cloud Deployment Considerations](#cloud-deployment-considerations) <!-- NEW: Added link to TOC -->
 *   [Troubleshooting](#troubleshooting)
 *   [License](#license)
 
@@ -99,8 +100,8 @@ Ensure you have the following before setting up HeliX:
 1.  **Access Client & Register:** Open the HeliX URL in your browser. Choose a unique temporary ID (3-30 chars: `a-z`, `A-Z`, `0-9`, `-`, `_`) and click "Register".
 2.  **Share ID (OOB - Step 1):** Securely communicate your registered ID (shown in the sidebar) to your intended peer using a separate channel (phone, video, etc.). *(On smaller screens, use the `☰` button to access the sidebar).*
 3.  **Initiate or Accept Chat:**
-    *   **To Initiate:** Enter your peer's ID in the sidebar input field and click "Start Chat". *(Use `☰` on smaller screens to access the sidebar).*
-    *   **To Accept:** If you receive a request notification, click "Accept" (or "Deny"). You might need to click the peer's ID in the session list first if another chat is active. *(Use `☰` on smaller screens to access the sidebar and session list).*
+    *   **To Initiate:** Enter your peer's ID in the sidebar input field and click "Start Chat".
+    *   **To Accept:** If you receive a request notification, click "Accept" (or "Deny"). You might need to click the peer's ID in the session list first if another chat is active.
 4.  **SAS Verification (OOB - Step 2 - CRITICAL):**
     *   After the initial connection, the **"Verify Connection"** pane appears, showing a code (e.g., `123 456`).
     *   **You MUST compare this code** with your peer's code **out-of-band** (e.g., read it aloud over a phone call). This verifies you have a secure connection directly with your peer and protects against Man-in-the-Middle attacks.
@@ -115,7 +116,7 @@ Ensure you have the following before setting up HeliX:
     *   `/version`: Show client version.
     *   `/info`: Show connection details.
     *   `/help`: Show this list.
-8.  **Controls:** Use sidebar buttons (🔊/🔇, ⚙️) for mute/settings. Click peer IDs in the list to switch sessions. Use the "End Session" button in the chat header to disconnect. *(Use `☰` on smaller screens to access the sidebar controls and session list).*
+8.  **Controls:** Use sidebar buttons (🔊/🔇, ⚙️) for mute/settings. Click peer IDs in the list to switch sessions. Use the "End Session" button in the chat header to disconnect.
 
 ---
 
@@ -155,7 +156,46 @@ HeliX establishes a secure, end-to-end encrypted channel with Perfect Forward Se
 *   **Out-of-Band Security:** The secure exchange of temporary IDs and the correct comparison of SAS codes via a trusted out-of-band channel are critical user responsibilities. **Failure to compare SAS codes correctly defeats the MitM protection.**
 *   **Metadata:** The server knows which IDs are connected and relays messages between them. It also temporarily tracks active pairings (`Alice` <-> `Bob`) to notify users if their peer disconnects unexpectedly. This metadata does not expose message content but could reveal communication patterns if the server were compromised.
 
----
+--- <!-- NEW SECTION START -->
+
+## Cloud Deployment Considerations
+
+The `helix_manager.py` script is designed for local development and testing, handling dependency checks, `mkcert` certificate generation, and running both the WSS and a simple HTTPS server. For deployment on a cloud server (VPS, etc.), a different approach is typically used:
+
+1.  **Running the WSS Server:**
+    *   The `helix_manager.py` script is **not** used.
+    *   You run the WebSocket server directly using Python: `python server/main.py`
+    *   It's highly recommended to use a process manager like `systemd` (Linux), `supervisor`, or `pm2` (Node.js based, can manage Python) to keep the server running reliably in the background, handle restarts on failure, and manage logs.
+
+2.  **Configuration (`server/config.py`):**
+    *   **`HOST`**: Should typically remain `'0.0.0.0'` to listen on all interfaces within the server.
+    *   **`PORT`**: Set this to a port the Python process will listen on internally (e.g., `5678`). This port usually won't be exposed directly to the internet.
+    *   **`ENABLE_SSL`**: Set this to `False`. TLS termination (handling HTTPS) will be done by the reverse proxy, not the Python server itself. The connection between the reverse proxy and the Python WSS server can be unencrypted (`ws://`) as it happens locally on the server.
+    *   **`DEBUG`**: Should be set to `False` for production.
+
+3.  **Configuration (`client/js/config.js`):**
+    *   **`webSocketPort`**: This **must** be changed to the public-facing port that users will connect to, which is typically the standard HTTPS port `443` when using a reverse proxy. The reverse proxy will handle forwarding traffic from port 443 to the internal port specified in `server/config.py`.
+    *   **`DEBUG`**: Should be set to `false`.
+    *   **Important:** Since `helix_manager.py` is not used, you need to manually edit `client/js/config.js` before serving the client files.
+
+4.  **Reverse Proxy (Nginx/Apache):**
+    *   A web server like **Nginx** or **Apache** is essential and should be configured as a reverse proxy.
+    *   **Responsibilities:**
+        *   **HTTPS Termination:** Handles incoming HTTPS connections using proper TLS certificates (see below).
+        *   **Serving Static Files:** Serves the contents of the `client/` directory (index.html, css, js, etc.) to users accessing your domain via HTTPS.
+        *   **WebSocket Proxying:** Forwards incoming WebSocket connections (`wss://yourdomain.com/`) to the locally running Python WSS server (`ws://127.0.0.1:PORT`, where `PORT` is from `server/config.py`). This requires specific proxy configuration directives (e.g., `proxy_http_version 1.1`, `proxy_set_header Upgrade $http_upgrade`, `proxy_set_header Connection "upgrade"` in Nginx).
+
+5.  **TLS Certificates:**
+    *   Do **not** use `mkcert` for cloud deployment. `mkcert` certificates are only trusted locally.
+    *   Obtain valid TLS certificates for your domain. **Let's Encrypt** (using tools like Certbot) is a free and widely used option.
+    *   Configure your reverse proxy (Nginx/Apache) to use these certificates for HTTPS.
+
+6.  **Firewall:**
+    *   Configure the cloud server's firewall to allow incoming traffic only on necessary ports, primarily HTTPS (port `443`). The internal WSS port used by the Python server should generally *not* be exposed directly.
+
+**Disclaimer:** Providing detailed Nginx/Apache configuration, Certbot usage, or process manager setup is beyond the scope of this documentation. Please refer to the official documentation for those tools.
+
+--- <!-- NEW SECTION END -->
 
 ## Troubleshooting
 
