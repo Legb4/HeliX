@@ -16,6 +16,3 @@ logs/*.log
 # env/
 # *.venv
 # .env
-
-# Ignoring prompt generator
-generate_prompt.py
