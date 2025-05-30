@@ -53,7 +53,7 @@ Ensure you have the following before setting up HeliX:
 ## Installation & Setup
 
 1.  **Get the Code:**
-    *   Clone the repository using Git: `git clone https://github.com/DDeal/HeliX.git` and `cd helix`
+    *   Clone the repository using Git: `git clone https://github.com/Legb4/HeliX.git` and `cd helix`
     *   Alternatively, download and extract the project ZIP file and navigate into the `helix` directory in your terminal.
 
 2.  **Install `mkcert`:** (Perform this step *before* step 4)
